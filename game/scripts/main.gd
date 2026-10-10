@@ -40,9 +40,10 @@ const Q3_TITLE := "Q3. 마지막 한 걸음"
 const XP := {"ironbeak": 15, "beetle": 20, "patrol": 30}
 ## 상단 HUD에 가리지 않도록 플레이어를 화면 중앙보다 조금 아래에 둔다.
 const CAMERA_LOOK_AHEAD := Vector2(0, -36)
-## 영물 변신 (기획서 6장 규칙 5): 전투 중 2초 준비·피격 시 취소·성공 후 10초 대기, 전투 밖은 짧은 연출만.
+## 영물 변신 (기획서 6장 규칙 5): 전투 중 2초 준비·피격 시 취소·성공 후 10초 대기.
+## 전투 밖은 즉시 전환하고, 조작을 막지 않는 짧은 연출(TRANSFORM_FX초)만 보여준다.
 const TRANSFORM_COMBAT := 2.0
-const TRANSFORM_CALM := 0.8
+const TRANSFORM_FX := 0.8
 const TRANSFORM_COMBAT_CD := 10.0
 const COMBAT_RADIUS := 220.0
 
@@ -133,7 +134,7 @@ func _ready() -> void:
 	camera.limit_left = 0
 	camera.limit_top = -int(World.TOP_MARGIN)
 	camera.limit_right = int(MAP_SIZE.x)
-	camera.limit_bottom = int(MAP_SIZE.y)
+	camera.limit_bottom = int(MAP_SIZE.y + World.BOTTOM_MARGIN)
 	camera.offset = CAMERA_LOOK_AHEAD
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 8.0
@@ -587,7 +588,10 @@ func _on_portrait() -> void:
 	_transform_in_combat = _in_combat()
 	if _transform_in_combat:
 		hud.toast("변신 준비 2초 — 맞으면 끊겨요")
-	player.start_transform(TRANSFORM_COMBAT if _transform_in_combat else TRANSFORM_CALM)
+		player.start_transform(TRANSFORM_COMBAT)
+	else:
+		player.transform_fx = TRANSFORM_FX
+		_on_transform_done()
 
 
 func _in_combat() -> bool:
@@ -597,9 +601,12 @@ func _in_combat() -> bool:
 	return false
 
 
+## 한 영물은 동행 또는 장비 중 한 상태만 가진다 (기획서 6장 규칙 3).
+## 신발이면 dotom 노드가 숨고 동행 탐지·경고가 멈추며, 동행이면 player.shoe가 꺼져 추가 한 걸음·이동속도 보너스가 없다.
 func _on_transform_done() -> void:
 	if _transform_in_combat:
 		spirit_switch_cd = TRANSFORM_COMBAT_CD
+		_transform_in_combat = false
 	if _pending_shoe:
 		dotom.equip()
 		player.shoe = true

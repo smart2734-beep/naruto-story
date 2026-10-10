@@ -69,6 +69,9 @@ func _wait_until(cond: Callable, timeout: float) -> bool:
 
 
 func _check(ok: bool, what: String) -> void:
+	_section_total += 1
+	if ok:
+		_section_ok += 1
 	print(("  [OK]   " if ok else "  [FAIL] ") + what)
 	if not ok:
 		fails.append(what)
@@ -96,22 +99,41 @@ func _dodge_toward(dir: Vector2) -> void:
 
 func _autotest() -> void:
 	await _wait(0.3)
-	await _test_q1()
-	await _test_q2()
-	await _test_q3()
+	var only_q1 := OS.get_cmdline_user_args().has("--q1")
+	await _section("Q1", _test_q1)
+	if not only_q1:
+		await _section("Q2", _test_q2)
+		await _section("Q3", _test_q3)
+		await _section("영물 규칙", _test_spirit_rules)
+	for line in _summary:
+		print(line)
 	print("=== RESULT: %s (%d fail) ===" % ["PASS" if fails.is_empty() else "FAIL", fails.size()])
 	get_tree().quit(0 if fails.is_empty() else 1)
 
 
+var _summary: Array[String] = []
+var _section_ok := 0
+var _section_total := 0
+
+
+func _section(title: String, body: Callable) -> void:
+	print("=== %s ===" % title)
+	_section_ok = 0
+	_section_total = 0
+	await body.call()
+	_summary.append("  %s: %d/%d" % [title, _section_ok, _section_total])
+
+
+## Q1: 최초 구현(112e6c7)의 22개 항목을 같은 순서·의미로 유지한다.
 func _test_q1() -> void:
-	print("=== Q1 ===")
 	var p = m.player
 	_check(m.stage == Main.Stage.TALK_DANU, "시작 단계는 단우와 대화")
 	_teleport(m.danu.position + Vector2(0, 24))
 	await _settle()
 	_check(m.current_interact == m.danu, "단우 근처에서 상호작용 대상이 단우")
 	m._on_interact(m.current_interact)
-	_check(m.hud.dialogue_active(), "대화 시작")
+	await _settle()
+	_check(p.locked and m.hud.dialogue_active(), "대화 중 조작 잠금")
 	m.hud.skip_dialogue()
 	_check(m.stage == Main.Stage.GET_CRATE, "대화 후 상자 받기 단계")
 
@@ -121,7 +143,7 @@ func _test_q1() -> void:
 
 	_teleport(Main.ENTRANCE + Vector2(0, -20))
 	await _settle()
-	_check(m.stage == Main.Stage.CROSS, "입구 도착 → 필드 진입")
+	_check(m.stage == Main.Stage.CROSS and m.checkpoint_for(Main.ENTRANCE + Vector2(0, -300)) == Main.ENTRANCE, "입구 도착 → 필드 진입, 재시작 지점 갱신")
 
 	var b1 = _enemy("ironbeak")
 	_teleport(b1.home + Vector2(0, 120))
@@ -153,15 +175,25 @@ func _test_q1() -> void:
 	_check(not p.dead and p.position.distance_to(Main.ENTRANCE) < 2.0 and p.carrying and p.hp == p.max_hp, "입구에서 재시작, 부품 유지, 체력 회복")
 
 	_teleport(m.haon.position + Vector2(0, 30))
+	await _settle()
+	_check(m.current_interact == m.haon, "하온 근처에서 상호작용 대상이 하온")
+	m._on_interact(m.haon)
+	m.hud.skip_dialogue()
+	_check(GameState.level == 2 and GameState.currency == 20 and GameState.has_skill("사선베기") and GameState.weapon == "기본 장도", "보상: Lv.2, 재화 20, 사선베기, 기본 장도")
+	_check(not p.carrying and m.stage == Main.Stage.BACKFLOW, "전달 후 수문 이벤트 단계")
+	await _wait(3.0)
+	m.hud.skip_dialogue()
+	_check(m.world.backflow > 0.5, "수문 역류 연출")
+	_check(m.maedeup.visible and m.stage == Main.Stage.TALK_MAEDEUP, "매듭 등장, Q2 요청 대기")
+	_barrier_before_q2 = m.world.blocker_enabled("east_barrier")
+	await _wait(2.0)
+	_teleport(m.maedeup.position + Vector2(0, 20))
+	await _interact(m.maedeup)
+	_check(m.stage == Main.Stage.Q2_GO_BANK, "매듭 대화 후 Q1 완료 (Q2 시작)")
+
+	_teleport(m.haon.position + Vector2(0, 30))
 	await _interact(m.haon)
-	_check(GameState.level == 2 and GameState.currency == 20 and GameState.has_skill("사선베기") and GameState.weapon == "기본 장도", "Q1 보상: Lv.2, 재화 20, 사선베기, 기본 장도")
-	await _wait(3.0)
-	m.hud.skip_dialogue()
-	_check(m.world.backflow > 0.5 and m.stage == Main.Stage.TALK_MAEDEUP, "수문 역류 → 매듭 등장")
-	m._deliver_q1()
-	_check(GameState.currency == 20, "Q1 보상은 한 번만 지급")
-	await _wait(3.0)
-	m.hud.skip_dialogue()
+	_check(GameState.currency == 20 and not GameState.claim_reward("Q1"), "Q1 보상은 한 번만 지급")
 
 	await _settle()
 	p.gyeol = 100.0
@@ -170,16 +202,14 @@ func _test_q1() -> void:
 	_check(not p.try_skill(), "재사용 대기 중에는 다시 쓸 수 없음")
 
 
+var _barrier_before_q2 := false
+
+
 func _test_q2() -> void:
-	print("=== Q2 ===")
 	var p = m.player
 	var w = m.world
-	_check(w.blocker_enabled("east_barrier"), "Q2 전에는 동쪽 다리 통제선이 막혀 있음")
-	_teleport(m.maedeup.position + Vector2(0, 20))
-	await _interact(m.maedeup)
 	await _settle()
-	_check(m.stage == Main.Stage.Q2_GO_BANK and not w.blocker_enabled("east_barrier"), "매듭 대화 → Q2 시작, 통제선 열림")
-
+	_check(_barrier_before_q2 and not w.blocker_enabled("east_barrier"), "Q2 전에는 동쪽 다리가 막혀 있고, Q2 시작 시 열림")
 	# 실제로 걸어서 다리를 건넌다
 	_teleport(Vector2(270, 904))
 	m.hud.forced_move = Vector2.RIGHT
@@ -262,7 +292,6 @@ func _test_q2() -> void:
 
 
 func _test_q3() -> void:
-	print("=== Q3 ===")
 	var p = m.player
 	var w = m.world
 	var d = m.dotom
@@ -272,8 +301,15 @@ func _test_q3() -> void:
 	await _interact(m.haon)
 	_check(m.stage == Main.Stage.Q3_FIND, "하온 대화 → 동행 도톰과 틈 앞으로")
 
-	# 동행 탐지
+	# 배타성: 신발 상태에서는 동행 탐지가 일어나지 않는다
+	m._on_portrait()
+	_check(p.shoe and p.transform_t == 0.0 and p.transform_fx > 0.0, "전투 밖 변신은 즉시 적용, 조작을 막지 않는 연출만")
 	_teleport(Main.GAP_START)
+	await _wait(1.0)
+	_check(w.leaf_marks.is_empty() and m.stage == Main.Stage.Q3_FIND and m.hud.hint_text.begins_with("도톰을 동행"), "신발 상태에서는 동행 탐지 없음 (안내 표시)")
+	m._on_portrait()
+	_check(not p.shoe and d.state == Dotom.State.COMPANION and m.spirit_switch_cd == 0.0, "전투 밖에서는 대기시간 없이 다시 동행으로")
+	# 동행 탐지
 	d.position = Main.GAP_START + Vector2(-20, 10)
 	var marked: bool = await _wait_until(func(): return m.stage == Main.Stage.Q3_TRANSFORM, 4.0)
 	_check(marked and GameState.flag("q3_detect") and w.leaf_marks.size() == 1, "도톰 동행 탐지 → 안전 발판에 잎 표시")
@@ -286,10 +322,9 @@ func _test_q3() -> void:
 	await _wait(0.8)
 	_check(p.position == Main.GAP_START and p.gyeol == p.max_gyeol, "출발 발판 복귀, 연습 구간이라 결력 즉시 회복")
 
-	# 변신 (전투 밖: 짧은 연출)
+	# 신발로 변신
 	m._on_portrait()
-	_check(absf(p.transform_t - Main.TRANSFORM_CALM) < 0.05, "전투 밖 변신은 짧은 연출 (%.1f초)" % Main.TRANSFORM_CALM)
-	await _wait(1.0)
+	await _settle()
 	_check(p.shoe and d.state == Dotom.State.EQUIPPED and not d.visible and m.hud.spirit_form == "신발", "도톰이 신발로 변신 (동행 효과 없음)")
 	_check(m.stage == Main.Stage.Q3_GAP, "틈 건너기 단계")
 
@@ -332,15 +367,6 @@ func _test_q3() -> void:
 	await _wait(1.5)
 	_check(pt.state == Patrol.State.PATROL and p.hp == p.max_hp, "순찰기 뒤쪽은 안전")
 
-	# 전투 중 변신: 2초 준비, 맞으면 취소
-	m.spirit_switch_cd = 0.0
-	_teleport(Vector2(940, 100))
-	await _settle()
-	m._on_portrait()
-	_check(absf(p.transform_t - Main.TRANSFORM_COMBAT) < 0.05, "전투 중 변신은 2초 준비")
-	p.invuln = 0.0
-	p.take_damage(1.0, pt.position, pt)
-	_check(p.transform_t == 0.0 and p.shoe, "준비 중 맞으면 변신 취소 (신발 유지)")
 
 	# 되받기는 Q3 보상 전이라 아직 없음
 	_check(not p.try_guard(), "되받기는 아직 배우지 않음")
@@ -447,6 +473,9 @@ func _screenshot(path: String, scenario: String) -> void:
 		_:
 			await _wait(0.6)
 	await RenderingServer.frame_post_draw
+	var vp := get_viewport().get_visible_rect().size
+	var sp: Vector2 = get_viewport().get_canvas_transform() * m.player.global_position
+	print("viewport %dx%d, player screen %.0f%% x / %.0f%% y" % [vp.x, vp.y, sp.x / vp.x * 100.0, sp.y / vp.y * 100.0])
 	var img := get_viewport().get_texture().get_image()
 	img.save_png(path)
 	print("saved ", path)
@@ -496,3 +525,85 @@ func _to_q3() -> void:
 	await _interact(m.haon)
 	m.hud.clear_hint()
 	m.hud.toasts.clear()
+
+
+## CLAUDE.md: 동행/장비 효과의 배타성·변신 취소·전환 대기시간을 직접 검증한다.
+func _test_spirit_rules() -> void:
+	var p = m.player
+	var d = m.dotom
+	m.hud.skip_dialogue()
+	# 남은 적을 정리하고 전투 밖에서 동행 상태로 맞춘다
+	for e in m.enemies:
+		if is_instance_valid(e) and e.alive:
+			e.take_hit(9999.0, Vector2.ZERO)
+	await _wait(0.6)
+	m.spirit_switch_cd = 0.0
+	p.transform_t = 0.0
+	p.respawn(Vector2(450, 120))
+	if p.shoe:
+		m._on_portrait()
+	await _settle()
+
+	# 효과 배타성: 이동속도와 노드 표시
+	_teleport(Vector2(500, 100))
+	m.hud.forced_move = Vector2.RIGHT
+	await _wait(0.2)
+	var v_companion: float = p.velocity.length()
+	m.hud.forced_move = null
+	_check(absf(v_companion - p.SPEED) < 0.5 and d.visible and not p.shoe, "동행: 신발 이동 보너스 없음 (%.0f), 도톰이 곁에 보임" % v_companion)
+	m._on_portrait()
+	_teleport(Vector2(500, 100))
+	m.hud.forced_move = Vector2.RIGHT
+	await _wait(0.2)
+	var v_shoe: float = p.velocity.length()
+	m.hud.forced_move = null
+	_check(absf(v_shoe - p.SPEED * p.SHOE_SPEED_MULT) < 0.5 and not d.visible and d.state == Dotom.State.EQUIPPED, "신발: 이동속도 +5%% (%.0f), 동행 도톰은 사라짐" % v_shoe)
+	m._on_portrait()
+	await _settle()
+
+	# 전투 중 변신: 준비 2초, 이동 불가, 피격·회피로 취소, 성공 후 10초 대기
+	var dummy = Patrol.new()
+	dummy.min_x = 800.0
+	dummy.max_x = 800.0
+	m._add_enemy(dummy, Vector2(800, 100), "patrol")
+	dummy.player = p
+	dummy.facing = 1.0
+	dummy.turn_wait = 999.0
+	_teleport(Vector2(700, 100))
+	p.invuln = 0.0
+	await _settle()
+	m.spirit_switch_cd = 0.0
+	m._on_portrait()
+	_check(absf(p.transform_t - Main.TRANSFORM_COMBAT) < 0.05 and not p.shoe, "전투 중 변신은 2초 준비, 준비 중에는 아직 동행")
+	m.hud.forced_move = Vector2.LEFT
+	await _wait(0.3)
+	m.hud.forced_move = null
+	_check(p.position.distance_to(Vector2(700, 100)) < 1.0, "준비 중에는 이동할 수 없음")
+	p.invuln = 0.0
+	p.take_damage(1.0, dummy.position, dummy)
+	_check(p.transform_t == 0.0 and not p.shoe and d.state == Dotom.State.COMPANION, "준비 중 맞으면 취소, 상태 유지")
+	_check(m.spirit_switch_cd == 0.0, "취소된 변신에는 전환 대기시간 없음")
+	await _wait(0.8)
+	m._on_portrait()
+	await _wait(0.2)
+	m.hud.forced_move = Vector2.LEFT
+	p.move_input = Vector2.LEFT
+	p.try_dodge()
+	m.hud.forced_move = null
+	_check(p.transform_t == 0.0 and not p.shoe, "준비 중 회피하면 취소")
+	await _wait(0.8)
+	_teleport(Vector2(700, 100))
+	await _settle()
+	m._on_portrait()
+	await _wait(Main.TRANSFORM_COMBAT + 0.2)
+	_check(p.shoe and d.state == Dotom.State.EQUIPPED, "2초 준비를 마치면 신발로 전환")
+	_check(m.spirit_switch_cd > Main.TRANSFORM_COMBAT_CD - 0.5, "전투 변신 성공 후 10초 전환 대기 (%.1f초 남음)" % m.spirit_switch_cd)
+	m._on_portrait()
+	await _settle()
+	_check(p.shoe and p.transform_t == 0.0, "대기시간 중에는 다시 바꿀 수 없음")
+	m.spirit_switch_cd = 0.05
+	await _wait(0.2)
+	_teleport(Vector2(450, 120))
+	await _settle()
+	m._on_portrait()
+	_check(not p.shoe and d.state == Dotom.State.COMPANION, "대기시간이 끝나면 다시 전환 가능")

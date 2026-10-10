@@ -13,6 +13,9 @@ const COL_W := 384.0  ## 서쪽 열 너비
 const FIELD_BOTTOM := 1480.0
 const PLATFORM_BOTTOM := 216.0
 const TOP_MARGIN := 240.0
+## 지도 아래 렌더링 여백. 충돌 경계(H)는 그대로 두고 카메라만 더 내려갈 수 있게 한다.
+## 시작 지점(y 1850)에서도 플레이어가 화면 세로 45~62% 안에 오도록 한다 (아트 명세 6장).
+const BOTTOM_MARGIN := 260.0
 const PIT_LAYER := 2
 
 const HOUSES: Array[Rect2] = [Rect2(24, 1520, 96, 64), Rect2(264, 1520, 96, 64), Rect2(24, 1790, 80, 60), Rect2(290, 1800, 70, 56)]
@@ -312,6 +315,7 @@ func _draw_west(water_col: Color) -> void:
 		draw_rect(r, Color("8a6a40"))
 		for x in range(int(r.position.x), int(r.end.x), 12):
 			draw_rect(Rect2(x, r.position.y - 4, 4, r.size.y + 4), Color("6a4a28"))
+	_draw_south_margin()
 	draw_rect(Rect2(140, 1460, 10, 28), Color("5a3a20"))
 	draw_rect(Rect2(234, 1460, 10, 28), Color("5a3a20"))
 	draw_rect(Rect2(136, 1456, 112, 6), Color("7fd6c2"))
@@ -436,3 +440,26 @@ func _draw_planks() -> void:
 			elif not wp["hidden"]:
 				for i in 3:
 					draw_line(rr.position + Vector2(10 + i * 22, 6), rr.position + Vector2(18 + i * 22, rr.size.y - 6), Color("2a1a10"), 1.5)
+
+
+## 지도 남쪽 밖: 이동할 수 없는 마을 담장과 교육원 뒤뜰. 카메라 여백용 장식.
+func _draw_south_margin() -> void:
+	var top := H - 16.0
+	draw_rect(Rect2(-64, top, COL_W + 64, BOTTOM_MARGIN + 16), Color("a8946e"))
+	draw_rect(Rect2(COL_W - 16, top, W - COL_W + 80, BOTTOM_MARGIN + 16), Color("2f4a2a"))
+	for i in 18:
+		var c := Vector2(COL_W + fposmod(i * 83.0, W - COL_W), top + 30 + fposmod(i * 47.0, BOTTOM_MARGIN - 40))
+		draw_circle(c, 18.0, Color("3a5a32"))
+	# 담장
+	draw_rect(Rect2(0, top, COL_W, 16), Color("7a786e"))
+	for x in range(0, int(COL_W), 24):
+		draw_line(Vector2(x, top), Vector2(x, H), Color("5e5c54"), 1.0)
+	draw_line(Vector2(0, top + 8), Vector2(COL_W, top + 8), Color("5e5c54"), 1.0)
+	# 교육원 뒤뜰 지붕과 화단
+	draw_rect(Rect2(40, H + 40, 120, 70), Color("6a4a3a"))
+	draw_rect(Rect2(40, H + 40, 120, 12), Color("7a5a48"))
+	draw_rect(Rect2(230, H + 60, 110, 60), Color("6a4a3a"))
+	draw_rect(Rect2(230, H + 60, 110, 12), Color("7a5a48"))
+	for i in 6:
+		draw_circle(Vector2(30 + i * 60, H + 160), 12.0, Color("5e7a48"))
+		draw_circle(Vector2(30 + i * 60, H + 156), 4.0, Color("d2ad62"))

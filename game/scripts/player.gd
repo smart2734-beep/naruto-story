@@ -72,6 +72,7 @@ var guard_t := 0.0
 var guard_cd := 0.0
 var transform_t := 0.0
 var transform_total := 0.0
+var transform_fx := 0.0  ## 전투 밖 즉시 변신의 연출 시간 (조작은 막지 않음)
 var since_action := 99.0
 var hurt_flash := 0.0
 var walk_t := 0.0
@@ -108,6 +109,7 @@ func _physics_process(delta: float) -> void:
 	guard_cd = maxf(guard_cd - delta, 0.0)
 	hurt_flash = maxf(hurt_flash - delta, 0.0)
 	fall_t = maxf(fall_t - delta, 0.0)
+	transform_fx = maxf(transform_fx - delta, 0.0)
 
 	if was_dodging and dodge_t <= 0.0:
 		_try_extra_step()
@@ -365,6 +367,13 @@ func _draw() -> void:
 	if transform_t > 0.0 and transform_total > 0.0:
 		var p := 1.0 - transform_t / transform_total
 		draw_arc(Vector2.ZERO, 18.0, -PI / 2.0, -PI / 2.0 + TAU * p, 24, Color("8fdc5a"), 2.5)
+
+	if transform_fx > 0.0:
+		# 발치에서 잎이 감겨 오르는 짧은 연출
+		var k := 1.0 - transform_fx / 0.8
+		for i in 6:
+			var ang := k * TAU + i * TAU / 6.0
+			draw_circle(Vector2(cos(ang) * 12.0, 8.0 - k * 14.0 + sin(ang) * 4.0), 2.0, Color(0.56, 0.86, 0.35, 1.0 - k))
 
 	if slash_t > 0.0:
 		var a := slash_dir.angle()

@@ -3,7 +3,7 @@
 장비로 변신하는 영물과 계약한 수습 닌자의 모바일 2D 액션 RPG.
 
 - 기획서: [docs/game-design-v0.1.md](docs/game-design-v0.1.md)
-- 게임 프로젝트: [game/](game/) — Godot 4.7, 세로 화면(720×1280), GL Compatibility 렌더러
+- 게임 프로젝트: [game/](game/) — Godot **4.7.2** (개발·검증 기준), 세로 화면(720×1280), GL Compatibility 렌더러
 
 ## 공동 작업
 
@@ -11,11 +11,11 @@
 - 구현 검토·우선순위·검증 증거: [docs/project-status.md](docs/project-status.md)
 - 마법 교육원 분위기의 아트·UI 명세: [docs/art-direction-v0.1.md](docs/art-direction-v0.1.md)
 
-Codex는 총괄·디자인, Claude는 Godot 구현을 담당한다. 최신 사용자 요청의 아트 방향은 위 디자인 명세를 따른다. 2026-10-10 클라우드에서는 Godot **4.6.3**으로 Q1 자동 점검 22개를 통과했다. 아래 4.7 표기와 실제 개발 엔진 버전의 차이는 협업 현황에 기록했으며, 공통 버전은 실제 실행 파일을 확인해 정한다.
+Codex는 총괄·디자인, Claude는 Godot 구현을 담당한다. 최신 사용자 요청의 아트 방향은 위 디자인 명세를 따른다. 엔진: 개발 PC의 실행 파일은 4.7.2.stable.official.ed1daf0bf이고, 이를 공통 기준으로 제안했다. Codex 클라우드의 4.6.3은 112e6c7의 Q1 22개만 확인했다. 근거는 [협업 현황 7장](docs/project-status.md#7-구현-기록-claude)에 있다.
 
 ## 실행
 
-Godot 4.7에서 **프로젝트 가져오기 → `game/project.godot`** 선택 후 실행(F5).
+Godot 4.7.2에서 **프로젝트 가져오기 → `game/project.godot`** 선택 후 실행(F5).
 
 | 조작 | 휴대폰 | PC 테스트 |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ Godot 4.7에서 **프로젝트 가져오기 → `game/project.godot`** 선택 �
 Godot_v4.7.2-stable_win64_console.exe --headless --path game -- --autotest
 ```
 
-Q1~Q3 전체 흐름을 64개 항목으로 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
+Q1 22 · Q2 21 · Q3 24 · 영물 규칙 11, 모두 78개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만 점검한다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
 
 스크린샷: `-- --shot=경로.png --scenario=이름` (start, dialogue, aim, reward, q2_ropes, q2_calm, q2_follow, q3_marked, q3_shoe, q3_patrol, q3_done)
 
