@@ -17,6 +17,9 @@ const Dotom := preload("res://scripts/spirit_dotom.gd")
 const Julbi := preload("res://scripts/spirit_julbi.gd")
 const Dummy := preload("res://scripts/enemy_dummy.gd")
 const FxWave := preload("res://scripts/fx_wave.gd")
+const Dungeon := preload("res://scripts/dungeon.gd")
+const Boss := preload("res://scripts/enemy_boss_claw.gd")
+const Worker := preload("res://scripts/npc_worker.gd")
 const Interactable := preload("res://scripts/interactable.gd")
 const Hud := preload("res://scripts/hud.gd")
 const FloatText := preload("res://scripts/float_text.gd")
@@ -27,7 +30,9 @@ enum Stage {
 	Q2_GO_BANK, Q2_ROPES, Q2_GET_ROPE, Q2_ANCHOR, Q2_CALM, Q2_FOLLOW, Q2_CONTRACT,
 	Q3_TALK_HAON, Q3_FIND, Q3_TRANSFORM, Q3_GAP, Q3_HANDLE,
 	Q3_DONE,  # = Q4 시작: 도겸에게 고리 보여주기
-	Q4_CRAFT, Q4_GO_MILL, Q4_SWAP, Q4_UNHOOK, Q4_REPAIR, Q4_BLADE, Q4_UPGRADE, Q4_DONE,
+	Q4_CRAFT, Q4_GO_MILL, Q4_SWAP, Q4_UNHOOK, Q4_REPAIR, Q4_BLADE, Q4_UPGRADE,
+	Q4_DONE,  # = Q5 시작: 단우에게 알리기
+	Q5_GO, Q5_ROOM1, Q5_DRAIN, Q5_RESCUE, Q5_ESCORT, Q5_BOSS, Q5_CORE, Q5_END,
 }
 
 const VILLAGE_START := Vector2(192, 1850)
@@ -52,7 +57,10 @@ const RING_POS := Vector2(955, 1290)
 const HOOK_POS: Array[Vector2] = [Vector2(885, 1290), Vector2(1025, 1290)]
 const JULBI_HOME := Vector2(1000, 1240)
 const DUMMY_POS := Vector2(910, 1196)
-const XP := {"ironbeak": 15, "beetle": 20, "patrol": 30, "dummy": 0}
+const Q5_TITLE := "Q5. 물을 돌려놓는 손"
+const XP := {"ironbeak": 15, "beetle": 20, "patrol": 30, "dummy": 0, "boss": 120}
+const OVERWORLD_LIMITS := Rect2(0, -World.TOP_MARGIN, World.W, World.H + World.BOTTOM_MARGIN + World.TOP_MARGIN)
+const DUNGEON_LIMITS := Rect2(Dungeon.X0, -120, Dungeon.X1 - Dungeon.X0, Dungeon.Y1 + 200)
 ## 상단 HUD에 가리지 않도록 플레이어를 화면 중앙보다 조금 아래에 둔다.
 const CAMERA_LOOK_AHEAD := Vector2(0, -36)
 ## 영물 변신 (기획서 6장 규칙 5): 전투 중 2초 준비·피격 시 취소·성공 후 10초 대기.
@@ -86,6 +94,17 @@ var ring_spot
 var hooks: Array = []
 var dummy
 var enemies: Array = []
+# Q5: 물레방아 아래 던전
+var dungeon
+var boss
+var worker
+var hatch_spot
+var plaque_spot
+var handle_l_spot
+var handle_r_spot
+var sluice_spot
+var core_spot
+var in_dungeon := false
 
 var stage: Stage = Stage.TALK_DANU
 var current_interact = null
@@ -112,6 +131,8 @@ var _once: Dictionary = {}
 func _ready() -> void:
 	world = World.new()
 	add_child(world)
+	dungeon = Dungeon.new()
+	add_child(dungeon)
 
 	danu = _make_npc("단우", Vector2(190, 1720), Color("4a5a3a"), Color("c8a060"), Color("2a2a2a"))
 	crate = _make_npc("부품 상자", Vector2(300, 1700), Color.WHITE, Color.WHITE, Color.WHITE)
@@ -177,6 +198,35 @@ func _ready() -> void:
 	_add_enemy(patrol, Vector2(900, 100), "patrol")
 	dummy = Dummy.new()
 	_add_enemy(dummy, DUMMY_POS, "dummy")
+	# Q5 던전: 1방의 일반 적과 3방의 보스
+	for home in [Vector2(1340, 1220), Vector2(1545, 1265)]:
+		_add_enemy(Beetle.new(), home, "beetle")
+	boss = Boss.new()
+	boss.dungeon = dungeon
+	_add_enemy(boss, Dungeon.BOSS_HOME, "boss")
+	boss.release_started.connect(_on_boss_release)
+	boss.flooded.connect(_on_boss_flooded)
+
+	# Q5 상호작용
+	hatch_spot = _make_spot("방앗간 아래", World.HATCH.get_center() + Vector2(0, -26), "내려가기")
+	plaque_spot = _make_spot("안내판", Dungeon.PLAQUE + Vector2(0, 22), "읽기")
+	plaque_spot.interactable = true
+	handle_l_spot = _make_spot("왼쪽 물레 손잡이", Dungeon.HANDLE_L + Vector2(0, 26), "돌리기")
+	handle_r_spot = _make_spot("오른쪽 물레 손잡이", Dungeon.HANDLE_R + Vector2(0, 26), "돌리기")
+	sluice_spot = _make_spot("수문 손잡이", Dungeon.SLUICE + Vector2(0, 20), "내리기")
+	core_spot = _make_spot("멈춘 정비기", Dungeon.BOSS_HOME, "회수")
+	worker = Worker.new()
+	worker.display_name = "정비공 보리"
+	worker.position = Vector2(1440, 700)
+	worker.body_color = Color("4a5a6a")
+	worker.accent = Color("d2ad62")
+	worker.hair = Color("5a3a20")
+	worker.dungeon = dungeon
+	worker.wait_spot = Dungeon.WAIT_SPOT
+	add_child(worker)
+	worker.interactable = false
+	worker.reached_wait_spot.connect(_on_worker_waiting)
+	worker.downed.connect(_on_worker_downed)
 
 	player = Player.new()
 	player.position = VILLAGE_START
@@ -196,12 +246,10 @@ func _ready() -> void:
 		e.player = player
 	dotom.player = player
 	julbi.player = player
+	worker.player = player
 
 	camera = Camera2D.new()
-	camera.limit_left = 0
-	camera.limit_top = -int(World.TOP_MARGIN)
-	camera.limit_right = int(MAP_SIZE.x)
-	camera.limit_bottom = int(MAP_SIZE.y + World.BOTTOM_MARGIN)
+	_apply_camera_limits(OVERWORLD_LIMITS)
 	camera.offset = CAMERA_LOOK_AHEAD
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 8.0
@@ -241,6 +289,21 @@ func _fit_camera() -> void:
 	camera.zoom = Vector2(z, z)
 
 
+func _apply_camera_limits(r: Rect2) -> void:
+	camera.limit_left = int(r.position.x)
+	camera.limit_top = int(r.position.y)
+	camera.limit_right = int(r.end.x)
+	camera.limit_bottom = int(r.end.y)
+
+
+func _make_spot(label_name: String, pos: Vector2, action: String):
+	var n = _make_npc(label_name, pos, Color.WHITE, Color.WHITE, Color.WHITE)
+	n.kind = "spot"
+	n.action_label = action
+	n.interactable = false
+	return n
+
+
 func _make_npc(npc_name: String, pos: Vector2, body: Color, accent: Color, hair: Color):
 	var n = Interactable.new()
 	n.display_name = npc_name
@@ -277,7 +340,8 @@ func _first(id: String) -> bool:
 
 func _enter_stage(s: Stage) -> void:
 	stage = s
-	for n in [danu, crate, haon, maedeup, anchor_spot, handle_spot, dogyeom, bench_village, bench_mill, ring_spot]:
+	for n in [danu, crate, haon, maedeup, anchor_spot, handle_spot, dogyeom, bench_village, bench_mill, ring_spot,
+			hatch_spot, plaque_spot, handle_l_spot, handle_r_spot, sluice_spot, core_spot, worker]:
 		n.marked = false
 	for r in ropes:
 		r.marked = false
@@ -368,7 +432,37 @@ func _enter_stage(s: Stage) -> void:
 			bench_mill.marked = true
 			hud.set_objective(Q4_TITLE, "공구대에서 장도 +1 강화", BENCH_MILL)
 		Stage.Q4_DONE:
-			hud.set_objective("Q5. 물을 돌려놓는 손", "다음 빌드에서 이어집니다 (방앗간 아래)", null)
+			danu.marked = true
+			hud.set_objective(Q5_TITLE, "단우에게 방앗간 아래 일을 알리기", danu.position)
+		Stage.Q5_GO:
+			hatch_spot.interactable = true
+			hatch_spot.marked = true
+			hud.set_objective(Q5_TITLE, "방앗간 아래 덮개로 내려가기", hatch_spot.position)
+		Stage.Q5_ROOM1:
+			hud.set_objective(Q5_TITLE, "첫 방을 지나 물레방으로", Vector2(1440, Dungeon.WALL_12))
+		Stage.Q5_DRAIN:
+			for h in [handle_l_spot, handle_r_spot]:
+				h.interactable = true
+				h.marked = true
+			hud.set_objective(Q5_TITLE, "물레 손잡이 두 개를 맞춰 물 빼기", Dungeon.PLAQUE)
+		Stage.Q5_RESCUE:
+			worker.interactable = true
+			worker.marked = true
+			hud.set_objective(Q5_TITLE, "고립된 정비공에게", worker.position)
+		Stage.Q5_ESCORT:
+			worker.interactable = false
+			hud.set_objective(Q5_TITLE, "정비공을 위쪽 방 오른쪽 높은 발판까지 안내", Dungeon.WAIT_SPOT)
+		Stage.Q5_BOSS:
+			sluice_spot.interactable = true
+			hud.set_objective(Q5_TITLE, "거름집게 멈추기 — 물길 방출 땐 수문 손잡이", null)
+		Stage.Q5_CORE:
+			core_spot.position = boss.position + Vector2(0, 30)
+			core_spot.interactable = true
+			core_spot.marked = true
+			sluice_spot.interactable = false
+			hud.set_objective(Q5_TITLE, "멈춘 정비기에서 계약 고리 회수", core_spot.position)
+		Stage.Q5_END:
+			hud.set_objective("여행 준비", "시제품 끝 — 첫 임무: 사다리령의 운송 기록 확인", null)
 
 
 func _update_rope_objective() -> void:
@@ -421,6 +515,12 @@ func _process(delta: float) -> void:
 				_enter_stage(Stage.Q3_HANDLE)
 		Stage.Q4_UNHOOK:
 			_check_hooks()
+		Stage.Q5_ROOM1:
+			if player.position.y < Dungeon.WALL_12:
+				_enter_stage(Stage.Q5_DRAIN)
+				hud.show_hint("안내판을 읽어 보세요. 두 손잡이의 화살표가 핵심이에요", 4.0)
+		Stage.Q5_ESCORT:
+			hud.target_world = Dungeon.WAIT_SPOT if dungeon.room_of(player.position) == 3 else Vector2(1440, Dungeon.WALL_23)
 
 	# 가장 가까운 상호작용 대상
 	current_interact = null
@@ -448,6 +548,7 @@ func _update_pause() -> void:
 	if pause == _paused:
 		return
 	_paused = pause
+	worker.paused = pause
 	for e in enemies:
 		if is_instance_valid(e):
 			e.set_physics_process(not pause)
@@ -460,7 +561,7 @@ func _companion_status() -> String:
 		"도톰":
 			return "숨은 발판 탐지"
 		"줄비":
-			return "연결쇠 탐지"
+			return "연결쇠 탐지" if stage >= Stage.Q4_GO_MILL and stage <= Stage.Q4_UNHOOK else "적 균형 흔들기"
 	return ""
 
 
@@ -544,6 +645,21 @@ func _on_interact(n) -> void:
 			_repair_handle()
 	elif hooks.has(n):
 		_unhook(n)
+	elif n == hatch_spot:
+		if stage == Stage.Q5_GO:
+			_choose_spirit_and_descend()
+	elif n == plaque_spot:
+		hud.start_dialogue([["안내판", "‘두 물레 손잡이가 서로 마주 볼 때 물길이 빠진다.’ — 왼쪽은 오른쪽을, 오른쪽은 왼쪽을 가리키게."]])
+	elif n == handle_l_spot or n == handle_r_spot:
+		_turn_wheel(n == handle_r_spot)
+	elif n == worker:
+		if stage == Stage.Q5_RESCUE:
+			_rescue_worker()
+	elif n == sluice_spot:
+		_pull_sluice()
+	elif n == core_spot:
+		if stage == Stage.Q5_CORE:
+			_recover_ring()
 
 
 func _talk_danu() -> void:
@@ -562,7 +678,13 @@ func _talk_danu() -> void:
 	elif stage < Stage.Q2_CONTRACT:
 		hud.start_dialogue([["단우", "수문이 역류했다고? …매듭을 도와줘. 네 손이 필요할 거야."]])
 	elif stage == Stage.Q4_DONE:
-		hud.start_dialogue([["단우", "방앗간 아래라고? 정비기가 있는 곳이야. 준비되면 같이 내려가자. (다음 빌드에서 이어집니다)"]])
+		hud.start_dialogue([
+			["단우", "도겸한테 들었어. 방앗간 아래 정비기는 물을 고르는 기계야. 고리가 씌워졌다면 스스로 멈추지 않을 거야."],
+			["단우", "아침에 정비공 보리가 내려갔다가 아직 안 돌아왔어."],
+			["단우", "오늘 네 임무는 기계를 이기는 게 아니야. 모두를 데리고 돌아오는 거야."],
+		], func(): _enter_stage(Stage.Q5_GO))
+	elif stage >= Stage.Q5_GO and stage < Stage.Q5_END:
+		hud.start_dialogue([["단우", "방앗간 아래 덮개야. 보리를 먼저 찾아."]])
 	else:
 		hud.start_dialogue([["단우", "영물과 계약했다고? 잘했어. 약속은 지키는 쪽이 먼저 지치지 않게 하는 거야."]])
 
@@ -1138,6 +1260,185 @@ func _complete_q4() -> void:
 		hud.show_hint("초상화를 길게 누르면 도톰과 줄비를 바꿔 데려갈 수 있어요", 5.0))
 
 
+# ── Q5: 물레방아 아래 ─────────────────────────────────────
+
+## 내려가기 전에 함께 갈 영물을 고른다 (기획서 Q5 ‘활성 영물 선택 안내’). 안에서도 전투 밖이면 바꿀 수 있다.
+func _choose_spirit_and_descend() -> void:
+	var avail := GameState.available_spirits()
+	if avail.size() < 2:
+		_enter_dungeon()
+		return
+	hud.start_choice("누구와 함께 내려갈까?", [
+		["도톰 — 신발", "회피 끝 한 걸음 · 동행이면 숨은 발판 탐지"],
+		["줄비 — 검", "회피 직후 첫 공격에 파동 · 동행이면 적의 균형 흔들기"],
+	], func(i: int):
+		set_active_spirit("도톰" if i == 0 else "줄비")
+		_enter_dungeon())
+
+
+func _enter_dungeon() -> void:
+	hud.show_fade("방앗간 아래로 내려간다…")
+	await get_tree().create_timer(0.7).timeout
+	in_dungeon = true
+	player.respawn(Dungeon.START, false)
+	_apply_camera_limits(DUNGEON_LIMITS)
+	camera.reset_smoothing()
+	var node = active_node()
+	if node != null and node.visible:
+		node.position = Dungeon.START + Vector2(14, 6)
+	hud.hide_fade()
+	_enter_stage(Stage.Q5_ROOM1)
+	hud.show_hint("활성 영물은 전투 밖에서 초상화를 길게 눌러 바꿀 수 있어요", 4.0)
+
+
+func _turn_wheel(right: bool) -> void:
+	if stage != Stage.Q5_DRAIN:
+		return
+	var done: bool = dungeon.turn_handle(right)
+	var arrows := ["↑", "→", "↓", "←"]
+	hud.toast("%s 손잡이: %s" % ["오른쪽" if right else "왼쪽", arrows[dungeon.handle_r if right else dungeon.handle_l]])
+	if done:
+		for h in [handle_l_spot, handle_r_spot]:
+			h.interactable = false
+			h.marked = false
+		shake = 0.5
+		hud.clear_hint()
+		hud.start_dialogue([["정비공 보리", "(웅덩이 너머에서) 물이 빠진다! 여기예요, 여기!"]], func(): _enter_stage(Stage.Q5_RESCUE))
+
+
+func _rescue_worker() -> void:
+	hud.start_dialogue([
+		["정비공 보리", "살았다… 정비기를 멈추러 왔다가 물이 차서 갇혔어요."],
+		["정비공 보리", "저 정비기, 원래 물을 고르는 기계예요. 집게에 낯선 고리가 씌워진 뒤로 물을 거꾸로 뿜어요."],
+		["정비공 보리", "위쪽 방 오른쪽에 높은 발판이 있어요. 거기라면 물이 차도 버틸 수 있어요. 데려가 주세요."],
+	], func():
+		worker.wstate = Worker.WState.FOLLOW
+		_enter_stage(Stage.Q5_ESCORT))
+
+
+func _on_worker_waiting() -> void:
+	if stage != Stage.Q5_ESCORT:
+		return
+	_enter_stage(Stage.Q5_BOSS)
+	hud.start_dialogue([
+		["정비공 보리", "여기서 기다릴게요. 물길을 뿜기 전에 저 수문 손잡이를 내려 주세요!"],
+		["정비공 보리", "집게를 뻗거나 김을 뿜고 나면 한동안 멈춰요. 그때가 기회예요."],
+	], func():
+		boss.wake()
+		hud.show_hint("물길 방출 예고가 뜨면 오른쪽 발판의 수문 손잡이를 내리고, 발판 안에 있으세요", 5.0))
+
+
+func _on_boss_release() -> void:
+	sluice_spot.marked = true
+	hud.show_hint("물길 방출! 오른쪽 높은 발판의 수문 손잡이를 내리세요", 3.0)
+
+
+func _pull_sluice() -> void:
+	if stage != Stage.Q5_BOSS:
+		return
+	if boss.state == Boss.State.RELEASE_AIM and not dungeon.secured:
+		dungeon.secured = true
+		sluice_spot.marked = false
+		hud.toast("수문을 내렸다 — 높은 발판이 안전 지대가 됐다")
+	elif not dungeon.secured:
+		hud.toast("물길을 뿜으려 할 때 내려야 해요")
+
+
+func _on_boss_flooded(secured: bool) -> void:
+	sluice_spot.marked = false
+	if secured:
+		hud.toast("정비공 무사!")
+	else:
+		worker.hurt(Boss.FLOOD_WORKER_DMG)
+		if worker.wstate != Worker.WState.DOWN:
+			hud.toast("정비공이 물에 휩쓸렸다! (체력 %d)" % roundi(worker.hp))
+
+
+func _on_worker_downed() -> void:
+	hud.show_fade("정비공이 쓰러졌다…\n이 방 입구에서 다시 도전합니다.")
+	await get_tree().create_timer(1.6).timeout
+	player.respawn(Dungeon.ROOM3_START)
+	player.hp = player.max_hp
+	camera.reset_smoothing()
+	_reset_boss_room()
+	hud.hide_fade()
+
+
+## 보스 재도전: 보스 체력·패턴, 물, 정비공을 대기 위치로 되돌린다 (기획서 Q5 실패 조건).
+func _reset_boss_room() -> void:
+	boss.reset_fight()
+	worker.reset_at(Dungeon.WAIT_SPOT, Worker.WState.WAIT)
+	sluice_spot.marked = false
+	await get_tree().create_timer(1.0).timeout
+	if stage == Stage.Q5_BOSS:
+		boss.wake()
+
+
+func _on_boss_stopped() -> void:
+	shake = 0.8
+	hud.start_dialogue([["정비공 보리", "멈췄다…! 집게 안쪽을 보세요. 그 고리예요."]], func(): _enter_stage(Stage.Q5_CORE))
+
+
+## 고리 회수와 이야기 선택. 선택 전에는 결과를 확정하지 않는다.
+func _recover_ring() -> void:
+	core_spot.interactable = false
+	hud.start_dialogue([
+		["조사", "정비기의 집게 안쪽에 덧씌운 계약 고리가 물려 있다. 수문에서 나온 것과 같은 모양이다."],
+		["정비공 보리", "이걸 누가 맡아야 할까요? 조합이 조사해 줄 수도 있고… 우리 마을이 같이 지킬 수도 있고요."],
+	], func():
+		hud.start_choice("회수한 계약 고리를 어디에 맡길까?", [
+			["길잇기 조합에 맡긴다", "조합이 기록하고 조사한다 · 다음 장에서 매듭이 증언"],
+			["주민 대표와 공동 보관한다", "이음터 주민이 함께 지킨다 · 다음 장에서 하온이 증언"],
+		], _complete_q5))
+
+
+func _complete_q5(choice: int) -> void:
+	var keeper := "조합" if choice == 0 else "주민"
+	if GameState.claim_reward("Q5"):
+		GameState.set_flag("q5_ring_keeper", keeper)
+		GameState.xp_to_level(6)
+		var gained := GameState.add_xp(150)
+		GameState.add_currency(60)
+		GameState.add_item("조율 부품")
+		GameState.add_item("혈계·도구 수련권")
+		hud.toast(Q5_TITLE + " 완료")
+		hud.toast("Lv.%d · 재화 +60" % GameState.level + (" · 레벨 업!" if gained > 0 else ""))
+		hud.toast("확정 조율 부품 · 혈계·도구 수련권")
+	_finish_prototype()
+
+
+## 마을로 돌아와 사다리령 납품 인장과 첫 여행 임무를 보여주고 끝낸다 (기획서 Q5 연결).
+func _finish_prototype() -> void:
+	var keeper := str(GameState.flags.get("q5_ring_keeper", "조합"))
+	hud.show_fade("보리와 함께 마을로 돌아왔다.")
+	await get_tree().create_timer(1.0).timeout
+	in_dungeon = false
+	_apply_camera_limits(OVERWORLD_LIMITS)
+	player.respawn(danu.position + Vector2(0, 40), false)
+	camera.reset_smoothing()
+	worker.visible = false
+	worker.interactable = false
+	var node = active_node()
+	if node != null and node.visible:
+		node.position = player.position + Vector2(14, 6)
+	hud.hide_fade()
+	_enter_stage(Stage.Q5_END)
+	var keep_line := "조합 금고에 고리를 맡겼어. 매듭이 기록을 맡기로 했고." if keeper == "조합" else "주민 대표들이 고리를 같이 지키기로 했어. 하온 어르신이 열쇠 하나를 맡았지."
+	hud.start_dialogue([
+		["단우", "다들 무사히 돌아왔구나. 그거면 됐어."],
+		["단우", keep_line],
+		["단우", "그런데 고리 안쪽에 납품 인장이 찍혀 있었어. 사다리령 운송조합의 인장이야."],
+		["단우", "첫 여행 임무야. 사다리령에 가서 이 고리가 어디서 왔는지 운송 기록을 확인해 와. 준비되면 말해."],
+	], func():
+		hud.show_end([
+			"시제품 끝 — 여행 준비 완료",
+			"첫 여행 임무: 사다리령의 운송 기록 확인",
+			"계약 고리 보관: %s" % ("길잇기 조합" if keeper == "조합" else "주민 공동 보관"),
+			"Lv.%d · %s · 영물: %s" % [GameState.level, GameState.weapon_label(), ", ".join(GameState.spirits)],
+			"플레이해 주셔서 감사합니다",
+		]))
+
+
 # ── 전투·사고 ─────────────────────────────────────────────
 
 func _on_enemy_aim(e) -> void:
@@ -1178,10 +1479,14 @@ func _on_enemy_defeated(e) -> void:
 	add_child(ft)
 	if gained > 0:
 		hud.toast("레벨 업! Lv.%d" % GameState.level)
+	if e == boss:
+		_on_boss_stopped()
 
 
 ## 쓰러지거나 빠졌을 때 돌아갈 가장 가까운 안전 지점.
 func checkpoint_for(p: Vector2) -> Vector2:
+	if in_dungeon:
+		return dungeon.checkpoint_for(p)
 	if p.x > 380.0 and p.y < 284.0:
 		return GAP_FAR if p.x > World.SAFE_LANDING.end.x else GAP_START
 	if p.x > 368.0 and p.y < 760.0:
@@ -1199,11 +1504,14 @@ func _reset_enemies() -> void:
 
 func _on_player_died() -> void:
 	var at := checkpoint_for(player.position)
-	hud.show_fade("쓰러졌다…\n가까운 안전한 곳에서 다시 시작합니다.\n얻은 것은 그대로예요.")
+	var boss_room: bool = in_dungeon and stage == Stage.Q5_BOSS and dungeon.room_of(player.position) == 3
+	hud.show_fade("쓰러졌다…\n%s\n얻은 것은 그대로예요." % ("이 방 입구에서 다시 도전합니다." if boss_room else "가까운 안전한 곳에서 다시 시작합니다."))
 	await get_tree().create_timer(1.6).timeout
 	player.respawn(at)
 	camera.reset_smoothing()
 	_reset_enemies()
+	if boss_room:
+		_reset_boss_room()
 	hud.hide_fade()
 
 

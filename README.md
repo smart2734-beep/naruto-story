@@ -37,9 +37,9 @@ Godot 4.7.2에서 **프로젝트 가져오기 → `game/project.godot`** 선택 
 Godot_v4.7.2-stable_win64_console.exe --headless --path game -- --autotest
 ```
 
-Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 8 · Codex 재현 8, 모두 126개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만 점검한다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
+Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 8 · Codex 재현 8 · Q5 32, 모두 158개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만 점검한다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
 
-스크린샷: `-- --shot=경로.png --scenario=이름` (start, info, dialogue, aim, reward, q2_ropes, q2_calm, q2_follow, q3_marked, q3_shoe, q3_patrol, q3_done, q3_preview, q4_craft, q4_hooks, q4_wave, q4_done)
+스크린샷: `-- --shot=경로.png --scenario=이름` (start, info, dialogue, aim, reward, q2_ropes, q2_calm, q2_follow, q3_marked, q3_shoe, q3_patrol, q3_done, q3_preview, q4_craft, q4_hooks, q4_wave, q4_done, q5_choice, q5_drain, q5_escort, q5_claw, q5_release, q5_end)
 
 ## 진행 상황
 
@@ -54,7 +54,7 @@ Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 8 · Codex 재현 8,
 - [ ] 첫 화면 이름·외형 선택
 - [x] 상단 HUD 정리 (상시 정보 160px, 목표 한 줄·펼치기, 작은 안내 띠, 대사 길이에 맞는 창, 영물 초상화 아래쪽 가운데)
 - [x] 제작·강화와 줄비, Q4 「방앗간의 헐거운 이음」: 도안 제출 → 물길 장도 제작 → 줄비 임시 동행·연결쇠 → 무료 손잡이 수선·계약 → 검 파동 → +1 확정 강화 → Q5 입구
-- [ ] 물레방아 던전·거름집게·Q5
+- [x] 물레방아 던전·거름집게·Q5 「물을 돌려놓는 손」: 영물 선택 → 1방 → 물레 손잡이 배수 → 정비공 구조·안내 → 거름집게(직선 집게·바닥 쓸기·물길 방출, 수문으로 안전 지대) → 고리 회수와 보관 선택 → 사다리령 인장, 여행 준비 장면에서 끝
 - [ ] 로컬 저장, 실제 휴대폰 점검 (Android 내보내기)
 
 아트는 모두 코드로 그린 임시 도형이다. 수치는 기획서의 초기 가설이며 플레이 테스트로 조정한다.

@@ -46,6 +46,11 @@ var dialogue_index := 0
 var dialogue_chars := 0.0
 var dialogue_done: Callable
 
+var choice_title := ""
+var choice_options: Array = []  ## [[제목, 설명], ...]
+var choice_cb: Callable
+var end_lines: Array = []  ## 시제품 끝 카드 (비어 있으면 숨김)
+
 var craft_title := ""
 var craft_rows: Array = []  ## [{id, title, desc, cost: [[이름, 보유, 필요]], button, can}]
 
@@ -133,6 +138,40 @@ func craft_open() -> bool:
 	return not craft_rows.is_empty()
 
 
+## 이야기 선택지. 고르면 cb.call(인덱스).
+func start_choice(title: String, options: Array, cb: Callable) -> void:
+	choice_title = title
+	choice_options = options
+	choice_cb = cb
+	joy_index = -1
+	joy_vec = Vector2.ZERO
+	info_open = false
+
+
+func choice_active() -> bool:
+	return not choice_options.is_empty()
+
+
+func pick_choice(i: int) -> void:
+	if i < 0 or i >= choice_options.size():
+		return
+	var cb := choice_cb
+	choice_options = []
+	choice_cb = Callable()
+	if cb.is_valid():
+		cb.call(i)
+
+
+func show_end(lines: Array) -> void:
+	end_lines = lines
+
+
+func _choice_rect(i: int) -> Rect2:
+	var s := _size()
+	var top := s.y * 0.5 - choice_options.size() * 70.0
+	return Rect2(40, top + 70 + i * 140, s.x - 80, 120)
+
+
 func show_fade(text: String) -> void:
 	fade = 1.0
 	fade_text = text
@@ -143,7 +182,7 @@ func hide_fade() -> void:
 
 
 func busy() -> bool:
-	return dialogue_active() or craft_open() or fade > 0.0
+	return dialogue_active() or craft_open() or choice_active() or not end_lines.is_empty() or fade > 0.0
 
 
 # ── 레이아웃 ─────────────────────────────────────────────
@@ -236,6 +275,16 @@ func _touch_down(e: InputEventScreenTouch) -> void:
 	if dialogue_active():
 		_advance_dialogue()
 		return
+	if choice_active():
+		for i in choice_options.size():
+			if _choice_rect(i).has_point(e.position):
+				_flash("choice%d" % i)
+				pick_choice(i)
+				return
+		return
+	if not end_lines.is_empty():
+		end_lines = []
+		return
 	if craft_open():
 		_craft_touch(e.position)
 		return
@@ -286,6 +335,14 @@ func _key(k: InputEventKey) -> void:
 	if dialogue_active():
 		if k.physical_keycode in [KEY_E, KEY_SPACE, KEY_ENTER]:
 			_advance_dialogue()
+		return
+	if choice_active():
+		if k.physical_keycode >= KEY_1 and k.physical_keycode <= KEY_9:
+			pick_choice(int(k.physical_keycode - KEY_1))
+		return
+	if not end_lines.is_empty():
+		if k.physical_keycode in [KEY_E, KEY_SPACE, KEY_ENTER, KEY_ESCAPE]:
+			end_lines = []
 		return
 	if craft_open():
 		if k.physical_keycode == KEY_ESCAPE or k.physical_keycode == KEY_E:
@@ -423,7 +480,7 @@ func _on_draw() -> void:
 	_draw_target_arrow(s)
 	if dialogue_active():
 		_draw_dialogue(s)
-	elif not craft_open():
+	elif not craft_open() and not choice_active() and end_lines.is_empty():
 		_draw_controls(s)
 	if player:
 		_draw_status(s)
@@ -434,6 +491,10 @@ func _on_draw() -> void:
 		_draw_info(s)
 	if craft_open():
 		_draw_craft(s)
+	if choice_active():
+		_draw_choice(s)
+	if not end_lines.is_empty():
+		_draw_end(s)
 	if fade > 0.0:
 		_canvas.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.75 * fade))
 		_canvas.draw_multiline_string(GameState.ui_font, Vector2(40, s.y * 0.42), fade_text, HORIZONTAL_ALIGNMENT_CENTER, s.x - 80, 30, 4, C_TEXT)
@@ -686,3 +747,31 @@ func _draw_craft(s: Vector2) -> void:
 			col = col.lightened(0.3)
 		_panel(br, col, Color(0, 0, 0, 0), 14)
 		_text(Vector2(br.position.x, br.position.y + 60), String(row["button"]), 26, Color("1a1408") if can else Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_CENTER, br.size.x)
+
+
+func _draw_choice(s: Vector2) -> void:
+	_canvas.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.5))
+	var r0 := _choice_rect(0)
+	_text(Vector2(40, r0.position.y - 24), choice_title, 28, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_CENTER, s.x - 80)
+	for i in choice_options.size():
+		var r := _choice_rect(i)
+		var col := Color(C_PANEL, 0.96)
+		if pressed_flash.has("choice%d" % i):
+			col = col.lightened(0.2)
+		_panel(r, col, C_GOLD)
+		var opt: Array = choice_options[i]
+		_text(Vector2(r.position.x + 28, r.position.y + 50), "%d. %s" % [i + 1, String(opt[0])], 26, C_TEXT)
+		if opt.size() > 1:
+			_text(Vector2(r.position.x + 28, r.position.y + 90), String(opt[1]), 19, Color(C_TEXT, 0.7), HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 56)
+
+
+func _draw_end(s: Vector2) -> void:
+	_canvas.draw_rect(Rect2(Vector2.ZERO, s), Color(C_PANEL_DEEP, 0.93))
+	var y := s.y * 0.26
+	for i in end_lines.size():
+		var line := String(end_lines[i])
+		var size := 34 if i == 0 else 22
+		var col := C_GOLD_LIGHT if i == 0 else C_TEXT
+		_canvas.draw_multiline_string(GameState.ui_font, Vector2(48, y), line, HORIZONTAL_ALIGNMENT_CENTER, s.x - 96, size, 3, col)
+		y += 62.0 if i == 0 else 44.0
+	_text(Vector2(0, s.y - 120), "터치해서 계속 둘러보기", 20, Color(C_TEXT, 0.6), HORIZONTAL_ALIGNMENT_CENTER, s.x)

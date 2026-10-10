@@ -11,6 +11,9 @@ const Beetle := preload("res://scripts/enemy_beetle.gd")
 const Patrol := preload("res://scripts/enemy_patrol.gd")
 const World := preload("res://scripts/world.gd")
 const Julbi := preload("res://scripts/spirit_julbi.gd")
+const Dungeon := preload("res://scripts/dungeon.gd")
+const Boss := preload("res://scripts/enemy_boss_claw.gd")
+const Worker := preload("res://scripts/npc_worker.gd")
 
 var m  # main.gd
 var fails: Array[String] = []
@@ -109,6 +112,7 @@ func _autotest() -> void:
 		await _section("Q4", _test_q4)
 		await _section("HUD", _test_hud)
 		await _section("Codex 재현", _test_codex_review)
+		await _section("Q5", _test_q5)
 	for line in _summary:
 		print(line)
 	print("=== RESULT: %s (%d fail) ===" % ["PASS" if fails.is_empty() else "FAIL", fails.size()])
@@ -399,7 +403,9 @@ func _test_q3() -> void:
 
 func _screenshot(path: String, scenario: String) -> void:
 	await _wait(0.4)
-	if not scenario in ["start", "dialogue", "aim", "reward", "info"]:
+	if scenario.begins_with("q5"):
+		await _setup_q5(scenario)
+	elif not scenario in ["start", "dialogue", "aim", "reward", "info"]:
 		await _fast_forward_to_q2()
 	match scenario:
 		"dialogue":
@@ -535,8 +541,14 @@ func _screenshot(path: String, scenario: String) -> void:
 				m.hud.clear_hint()
 				_teleport(World.HATCH.get_center() + Vector2(0, -40))
 				await _wait(0.4)
+		"q5_choice", "q5_drain", "q5_escort", "q5_claw", "q5_release", "q5_end":
+			pass  # _setup_q5에서 이미 준비했다
 		_:
 			await _wait(0.6)
+	# 렌더링이 늦어도 장면이 더 진행되지 않게, 캡처 직전에 게임을 멈춘다.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	get_tree().paused = true
+	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	var vp := get_viewport().get_visible_rect().size
 	var sp: Vector2 = get_viewport().get_canvas_transform() * m.player.global_position
@@ -941,3 +953,238 @@ func _test_codex_review() -> void:
 	GameState.weapon = keep_weapon
 	GameState.weapon_plus = keep_plus
 	m._enter_stage(keep_stage)
+
+
+func _test_q5() -> void:
+	var p = m.player
+	var dg = m.dungeon
+	var b = m.boss
+	var wk = m.worker
+	m.hud.skip_dialogue()
+	m.hud.end_lines = []
+	_check(m.stage == Main.Stage.Q4_DONE and m.danu.marked, "Q4 완료 → 단우에게 알리기")
+	_teleport(m.danu.position + Vector2(0, 26))
+	await _interact(m.danu)
+	_check(m.stage == Main.Stage.Q5_GO and m.hatch_spot.interactable, "단우 대화 → 방앗간 아래 덮개 열림")
+
+	# 영물 선택 → 던전
+	_teleport(m.hatch_spot.position + Vector2(0, 20))
+	await _interact(m.hatch_spot)
+	_check(m.hud.choice_active() and m.hud.choice_options.size() == 2, "내려가기 전 활성 영물 선택지 (도톰/줄비)")
+	m.hud.pick_choice(1)
+	await _wait(1.0)
+	_check(GameState.active_spirit == "줄비" and m.in_dungeon and m.stage == Main.Stage.Q5_ROOM1, "줄비를 골라 던전 1방 진입")
+	_check(p.position.distance_to(Dungeon.START) < 2.0 and m.camera.limit_left == int(Dungeon.X0), "던전 시작 위치와 카메라 범위 전환")
+
+	# 1방 → 2방
+	_teleport(Vector2(1440, Dungeon.WALL_12 - 30))
+	await _settle()
+	_check(m.stage == Main.Stage.Q5_DRAIN, "1방을 지나 물레방 (배수 단계)")
+	m.hud.clear_hint()
+
+	# 물웅덩이는 걸어서 못 건넌다
+	_teleport(Vector2(1440, 990))
+	m.hud.forced_move = Vector2.UP
+	await _wait(0.8)
+	m.hud.forced_move = null
+	_check(p.position.y > Dungeon.POOL.end.y - 2.0, "물이 찬 웅덩이는 건널 수 없음")
+
+	# 배수 퍼즐: 왼쪽 →, 오른쪽 ← 일 때만
+	_teleport(m.handle_r_spot.position + Vector2(0, 10))
+	await _interact(m.handle_r_spot)
+	_check(not dg.drained and dg.handle_r == 2, "한쪽만 돌리면 아직 배수 안 됨")
+	_teleport(m.handle_l_spot.position + Vector2(0, 10))
+	await _interact(m.handle_l_spot)
+	_check(not dg.drained, "왼쪽 →, 오른쪽 ↓ — 아직 마주 보지 않음")
+	_teleport(m.handle_r_spot.position + Vector2(0, 10))
+	await _interact(m.handle_r_spot)
+	await _settle()
+	_check(dg.drained and m.stage == Main.Stage.Q5_RESCUE, "두 손잡이가 마주 보면 배수 → 정비공 구조 단계")
+	_teleport(Vector2(1440, 990))
+	m.hud.forced_move = Vector2.UP
+	await _wait(2.4)
+	m.hud.forced_move = null
+	_check(p.position.y < Dungeon.POOL.position.y, "물이 빠진 웅덩이를 건널 수 있음")
+
+	# 구조 → 안내
+	_teleport(wk.position + Vector2(0, 26))
+	await _interact(wk)
+	_check(m.stage == Main.Stage.Q5_ESCORT and wk.wstate == Worker.WState.FOLLOW, "정비공 구조 → 따라오기")
+	for target in [Vector2(1440, 660), Vector2(1440, 600), Vector2(1560, 600), Vector2(1610, 560)]:
+		_teleport(target)
+		await _wait_until(func(): return wk.position.distance_to(p.position) < 50.0 or wk.wstate == Worker.WState.WAIT, 4.0)
+	var waiting: bool = await _wait_until(func(): return m.stage == Main.Stage.Q5_BOSS, 4.0)
+	_check(waiting and wk.wstate == Worker.WState.WAIT and dg.in_safe_zone(wk.position), "문을 지나 안전 지대까지 안내 → 대기")
+	m.hud.skip_dialogue()
+	await _settle()
+	_check(b.state != Boss.State.SLEEP, "보스 거름집게 깨어남")
+
+	# 직선 집게: 맞기 / 일반 회피로 피하기
+	p.respawn(b.position + Vector2(0, 120))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	p.attack_cd = 999.0
+	b.force_pattern("claw")
+	await _wait(1.3)
+	_check(p.hp == p.max_hp - Boss.CLAW_DMG, "예고를 무시하면 직선 집게 피해 %d" % Boss.CLAW_DMG)
+	p.respawn(b.position + Vector2(0, 120))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	p.gear = ""
+	b.force_pattern("claw")
+	await _wait(0.5)
+	await _dodge_toward(Vector2.RIGHT)
+	await _wait(0.6)
+	_check(p.hp == p.max_hp and b.state == Boss.State.CLAW_RECOVER, "신발 없이 일반 회피로 집게를 피함 → 빈틈")
+	var hp_before: float = b.hp
+	b.take_hit(10.0, p.position)
+	_check(absf(hp_before - b.hp - 15.0) < 0.01, "집게 뒤 빈틈에는 피해 1.5배")
+
+	# 바닥 쓸기: 근접에서 일반 회피로 범위 밖까지
+	p.respawn(b.position + Vector2(0, 44))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	b.force_pattern("sweep")
+	await _wait(0.5)
+	await _dodge_toward(Vector2.DOWN)
+	await _wait(0.5)
+	_check(p.hp == p.max_hp, "근접에서 일반 회피로 바닥 쓸기 범위를 벗어남")
+
+	# 물길 방출: 수문을 못 내리면 정비공과 플레이어가 다친다
+	p.respawn(Vector2(1300, 300))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	b.force_pattern("release")
+	_check(m.sluice_spot.marked and m.hud.hint_text.begins_with("물길 방출"), "물길 방출 예고 → 수문 손잡이 안내")
+	await _wait(Boss.RELEASE_AIM_TIME + 0.3)
+	_check(wk.hp == wk.max_hp - Boss.FLOOD_WORKER_DMG and p.hp == p.max_hp - Boss.FLOOD_DMG, "수문을 못 내리면 정비공 -%d, 플레이어 -%d" % [Boss.FLOOD_WORKER_DMG, Boss.FLOOD_DMG])
+	await _wait(Boss.FLOOD_TIME + Boss.VENT_TIME)
+
+	# 물길 방출: 수문을 내리고 발판 안에 있으면 모두 무사
+	var wk_hp: float = wk.hp
+	p.respawn(Dungeon.SLUICE + Vector2(0, 16))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	b.force_pattern("release")
+	await _wait(0.5)
+	await _interact(m.sluice_spot)
+	_check(dg.secured, "예고 중 수문 손잡이 → 안전 지대 확보")
+	await _wait(Boss.RELEASE_AIM_TIME)
+	_check(wk.hp == wk_hp and p.hp == p.max_hp, "확보한 발판 안에서는 정비공·플레이어 모두 무사")
+	await _wait(Boss.FLOOD_TIME + Boss.VENT_TIME)
+
+	# 정비공이 쓰러지면 방 입구에서 재도전, 정비공은 대기 위치로
+	wk.hp = 1.0
+	b.hp = 100.0
+	b.force_pattern("release")
+	await _wait(Boss.RELEASE_AIM_TIME + 0.3)
+	_check(wk.wstate == Worker.WState.DOWN and m.hud.fade > 0.0, "정비공 체력 0 → 실패 화면")
+	await _wait(3.0)
+	_check(wk.hp == wk.max_hp and wk.position == Dungeon.WAIT_SPOT and b.hp == b.max_hp and p.position == Dungeon.ROOM3_START and b.state != Boss.State.SLEEP, "재도전: 정비공 대기 위치·보스 체력 복구·방 입구")
+
+	# 플레이어가 쓰러져도 같은 재도전
+	p.hp = 1.0
+	p.invuln = 0.0
+	p.take_damage(5.0, b.position, b)
+	await _wait(3.2)
+	_check(not p.dead and p.position == Dungeon.ROOM3_START and wk.position == Dungeon.WAIT_SPOT, "플레이어가 쓰러지면 보스 방 입구에서 재도전")
+
+	# 처치 → 고리 회수 → 선택 → 보상 → 마을
+	var cur: int = GameState.currency
+	b.take_hit(9999.0, p.position)
+	await _settle()
+	m.hud.skip_dialogue()
+	_check(not b.alive and m.stage == Main.Stage.Q5_CORE and m.core_spot.interactable, "거름집게 정지 → 고리 회수 단계")
+	_teleport(m.core_spot.position + Vector2(0, 20))
+	await _interact(m.core_spot)
+	_check(m.hud.choice_active() and GameState.flags.get("q5_ring_keeper", "") == "", "선택 전에는 보관처가 정해지지 않음")
+	m.hud.pick_choice(1)
+	_check(GameState.flags.get("q5_ring_keeper", "") == "주민" and GameState.currency == cur + 60 and GameState.count("조율 부품") == 1 and GameState.count("혈계·도구 수련권") == 1 and GameState.level >= 6, "Q5 보상: 재화 60, 조율 부품, 수련권, Lv.6 이상, 보관처=주민")
+	await _wait(1.4)
+	_check(not m.in_dungeon and m.stage == Main.Stage.Q5_END and m.camera.limit_right == int(World.W), "마을로 돌아옴 (카메라 범위 복구)")
+	m.hud.skip_dialogue()
+	_check(m.hud.end_lines.size() >= 4 and String(m.hud.end_lines[2]).contains("주민"), "여행 준비 장면 → 시제품 끝 카드 (선택 반영)")
+	m._complete_q5(0)
+	await _wait(1.4)
+	m.hud.skip_dialogue()
+	_check(GameState.currency == cur + 60 and GameState.flags["q5_ring_keeper"] == "주민", "Q5 보상·선택은 한 번만 확정")
+	m.hud.end_lines = []
+
+	# 영물 어느 쪽이든: 패턴 수치가 일반 회피로 피할 수 있는지
+	var dodge_d: float = p.DODGE_SPEED * p.DODGE_TIME
+	_check(Boss.CLAW_WIDTH * 0.5 + 9.0 < dodge_d and Boss.SWEEP_R + 9.0 - p.ATTACK_RANGE < dodge_d, "집게 반폭·쓸기 범위 모두 일반 회피(%.0fpx)로 벗어남 — 도톰·줄비 공통" % dodge_d)
+
+
+## 캡처용: Q4까지 끝난 상태를 바로 만들고 Q5 장면을 준비한다.
+func _setup_q5(scenario: String) -> void:
+	GameState.learn_skill("사선베기")
+	GameState.learn_skill("되받기")
+	GameState.weapon = "물길 장도"
+	GameState.weapon_plus = 1
+	GameState.xp_to_level(5)
+	GameState.contract_spirit("도톰")
+	GameState.contract_spirit("줄비")
+	GameState.active_spirit = "도톰"
+	m.dotom.become_companion()
+	m.julbi.rest()
+	m._refresh_spirit_hud()
+	m.world.hatch_open = true
+	m.hud.clear_hint()
+	m._enter_stage(Main.Stage.Q5_GO)
+	_teleport(m.hatch_spot.position + Vector2(0, 24))
+	await _settle()
+	m._on_interact(m.hatch_spot)
+	if scenario == "q5_choice":
+		await _wait(0.3)
+		return
+	m.hud.pick_choice(1)
+	await _wait(1.0)
+	m.hud.clear_hint()
+	_teleport(Vector2(1440, Dungeon.WALL_12 - 30))
+	await _settle()
+	m.hud.clear_hint()
+	if scenario == "q5_drain":
+		_teleport(Vector2(1440, 1046))
+		await _wait(0.4)
+		return
+	for h in [m.handle_l_spot, m.handle_r_spot, m.handle_r_spot]:
+		m._on_interact(h)
+		m.hud.skip_dialogue()
+	m.hud.toasts.clear()
+	await _wait(1.6)
+	_teleport(m.worker.position + Vector2(0, 26))
+	await _interact(m.worker)
+	if scenario == "q5_escort":
+		_teleport(Vector2(1440, 690))
+		await _wait(0.6)
+		_teleport(Vector2(1470, 580))
+		await _wait(1.0)
+		return
+	_teleport(Vector2(1610, 560))
+	await _wait_until(func(): return m.stage == Main.Stage.Q5_BOSS, 6.0)
+	m.hud.skip_dialogue()
+	m.hud.clear_hint()
+	await _wait(0.2)
+	var b = m.boss
+	match scenario:
+		"q5_claw":
+			_teleport(b.position + Vector2(-20, 130))
+			b.force_pattern("claw")
+			await _wait(0.55)
+		"q5_release":
+			_teleport(Dungeon.SLUICE + Vector2(0, 16))
+			b.force_pattern("release")
+			await _wait(0.6)
+			m._on_interact(m.sluice_spot)
+			m.hud.toasts.clear()
+			await _wait(2.75)
+		"q5_end":
+			b.take_hit(9999.0, Vector2.ZERO)
+			await _settle()
+			m.hud.skip_dialogue()
+			_teleport(m.core_spot.position + Vector2(0, 20))
+			await _interact(m.core_spot)
+			m.hud.pick_choice(0)
+			await _wait(1.4)
+			m.hud.skip_dialogue()
+			await _wait(0.3)

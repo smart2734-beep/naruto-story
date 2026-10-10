@@ -12,11 +12,13 @@ $out = [IO.Path]::GetTempFileName()
 $err = [IO.Path]::GetTempFileName()
 $quoted = $GodotArgs | ForEach-Object { if ($_ -eq '++') { '--' } else { $_ } } | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 $p = Start-Process -FilePath $Godot -ArgumentList $quoted -NoNewWindow -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+$null = $p.Handle  # 핸들을 잡아 두어야 ExitCode를 읽을 수 있다
 if (-not $p.WaitForExit($Timeout * 1000)) {
     $p.Kill()
     Get-Content -Encoding utf8 $out, $err
     Write-Output "TIMEOUT after $Timeout s"
     exit 124
 }
+$p.WaitForExit()
 Get-Content -Encoding utf8 $out, $err
 exit $p.ExitCode
