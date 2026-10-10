@@ -1,0 +1,9 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+AFTER_CRAFT early=false weapon=물길 장도 ore=2 currency=40
+AFTER_RING stage=Q4_SWAP available=["도톰", "줄비"] transform=0.0 combat=false dead=false falling=false
+AFTER_SWAP stage=Q4_UNHOOK active=줄비 julbi=1
+AFTER_WAVE stage=Q4_UPGRADE weapon=물길 장도
+FINAL_BENCH rows=[{ "id": "upgrade", "title": "물길 장도 → +1 강화", "desc": "성능 +8% · 실패·파괴 없는 확정 강화", "cost": [["하천광", 2, 2], ["재화", 40, 20]], "button": "강화", "can": true }] ore=2 currency=40 resupply=0
+FINAL stage=Q4_DONE weapon=물길 장도 +1 reward=true hatch=true
+REVIEW RESULT: PASS

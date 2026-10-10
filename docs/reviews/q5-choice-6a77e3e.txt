@@ -1,0 +1,4 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+SPIRIT_OPTIONS=[["도톰 — 신발", "회피 끝 한 걸음 · 동행이면 숨은 발판 탐지"], ["줄비 — 검", "회피 직후 첫 공격에 파동 · 동행이면 적의 균형 흔들기"]]
+SPIRIT_AFTER_CHOICE active=줄비 gear= companion=true

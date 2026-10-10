@@ -1,0 +1,8 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+AFTER_CRAFT early=true weapon=물길 장도 +1 ore=0 currency=20
+AFTER_RING stage=Q4_SWAP available=["도톰", "줄비"] transform=0.0 combat=false dead=false falling=false
+AFTER_SWAP stage=Q4_UNHOOK active=줄비 julbi=1
+AFTER_WAVE stage=Q4_DONE weapon=물길 장도 +1
+FINAL stage=Q4_DONE weapon=물길 장도 +1 reward=true hatch=true
+REVIEW RESULT: PASS

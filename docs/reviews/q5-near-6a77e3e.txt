@@ -1,0 +1,3 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+RELEASE_ROUTE near=true reaction=false activated_at=0.0 flood_at=3.343 dodges=0 position=(1592.0, 512.0) hp=100.0 worker_hp=60.0 secured=true
