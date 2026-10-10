@@ -1,0 +1,5 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+PRACTICE_RESET position=(600.0, 100.0) falling=false energy=100.0 step_cd=6.85
+IMMEDIATE_SAFE_RETRY falling=true position=(723.9998, 37.73102) step_cd=6.40000000000001
+REVIEW RESULT: PASS
