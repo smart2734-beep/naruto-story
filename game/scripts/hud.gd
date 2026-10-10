@@ -49,6 +49,7 @@ var dialogue_done: Callable
 var choice_title := ""
 var choice_options: Array = []  ## [[제목, 설명], ...]
 var choice_cb: Callable
+var choice_note := ""
 var end_lines: Array = []  ## 시제품 끝 카드 (비어 있으면 숨김)
 
 var craft_title := ""
@@ -139,8 +140,9 @@ func craft_open() -> bool:
 
 
 ## 이야기 선택지. 고르면 cb.call(인덱스).
-func start_choice(title: String, options: Array, cb: Callable) -> void:
+func start_choice(title: String, options: Array, cb: Callable, note: String = "") -> void:
 	choice_title = title
+	choice_note = note
 	choice_options = options
 	choice_cb = cb
 	joy_index = -1
@@ -763,6 +765,9 @@ func _draw_choice(s: Vector2) -> void:
 		_text(Vector2(r.position.x + 28, r.position.y + 50), "%d. %s" % [i + 1, String(opt[0])], 26, C_TEXT)
 		if opt.size() > 1:
 			_text(Vector2(r.position.x + 28, r.position.y + 90), String(opt[1]), 19, Color(C_TEXT, 0.7), HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 56)
+	if choice_note != "":
+		var last := _choice_rect(choice_options.size() - 1)
+		_canvas.draw_multiline_string(GameState.ui_font, Vector2(48, last.end.y + 44), choice_note, HORIZONTAL_ALIGNMENT_CENTER, s.x - 96, 20, 3, Color(C_TEXT, 0.75))
 
 
 func _draw_end(s: Vector2) -> void:

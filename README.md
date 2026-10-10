@@ -39,7 +39,7 @@ Godot 4.7.2에서 **프로젝트 가져오기 → `game/project.godot`** 선택 
 Godot_v4.7.2-stable_win64_console.exe --headless --path game -- --autotest
 ```
 
-Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 8 · Codex 재현 8 · Q5 32, 모두 158개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만 점검한다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
+Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 8 · Codex 재현 8 · Q5 35, 모두 161개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만 점검한다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
 
 스크린샷: `-- --shot=경로.png --scenario=이름` (start, info, dialogue, aim, reward, q2_ropes, q2_calm, q2_follow, q3_marked, q3_shoe, q3_patrol, q3_done, q3_preview, q4_craft, q4_hooks, q4_wave, q4_done, q5_choice, q5_drain, q5_escort, q5_claw, q5_release, q5_end)
 

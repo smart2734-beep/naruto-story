@@ -105,6 +105,7 @@ var handle_r_spot
 var sluice_spot
 var core_spot
 var in_dungeon := false
+var _drain_time := 0.0
 
 var stage: Stage = Stage.TALK_DANU
 var current_interact = null
@@ -519,8 +520,15 @@ func _process(delta: float) -> void:
 			if player.position.y < Dungeon.WALL_12:
 				_enter_stage(Stage.Q5_DRAIN)
 				hud.show_hint("안내판을 읽어 보세요. 두 손잡이의 화살표가 핵심이에요", 4.0)
+		Stage.Q5_DRAIN:
+			_drain_time += delta
+			if _drain_time > 25.0 and not dungeon.drained:
+				_drain_time = 0.0
+				hud.show_hint("예: 왼쪽 손잡이는 오른쪽(→)을, 오른쪽 손잡이는 왼쪽(←)을 가리키게", 5.0)
 		Stage.Q5_ESCORT:
 			hud.target_world = Dungeon.WAIT_SPOT if dungeon.room_of(player.position) == 3 else Vector2(1440, Dungeon.WALL_23)
+		Stage.Q5_BOSS:
+			_guide_release()
 
 	# 가장 가까운 상호작용 대상
 	current_interact = null
@@ -561,7 +569,7 @@ func _companion_status() -> String:
 		"도톰":
 			return "숨은 발판 탐지"
 		"줄비":
-			return "연결쇠 탐지" if stage >= Stage.Q4_GO_MILL and stage <= Stage.Q4_UNHOOK else "적 균형 흔들기"
+			return "연결쇠 탐지" if stage >= Stage.Q4_GO_MILL and stage <= Stage.Q4_UNHOOK else "가까운 적 보조 공격"
 	return ""
 
 
@@ -649,7 +657,7 @@ func _on_interact(n) -> void:
 		if stage == Stage.Q5_GO:
 			_choose_spirit_and_descend()
 	elif n == plaque_spot:
-		hud.start_dialogue([["안내판", "‘두 물레 손잡이가 서로 마주 볼 때 물길이 빠진다.’ — 왼쪽은 오른쪽을, 오른쪽은 왼쪽을 가리키게."]])
+		hud.start_dialogue([["안내판", "두 화살표가 서로를 향하게 돌리세요. 왼쪽 →, 오른쪽 ←."]])
 	elif n == handle_l_spot or n == handle_r_spot:
 		_turn_wheel(n == handle_r_spot)
 	elif n == worker:
@@ -1269,11 +1277,17 @@ func _choose_spirit_and_descend() -> void:
 		_enter_dungeon()
 		return
 	hud.start_choice("누구와 함께 내려갈까?", [
-		["도톰 — 신발", "회피 끝 한 걸음 · 동행이면 숨은 발판 탐지"],
-		["줄비 — 검", "회피 직후 첫 공격에 파동 · 동행이면 적의 균형 흔들기"],
+		["도톰과 함께", "동행: 숨은 발판 탐지 / 신발: 회피 뒤 한 걸음"],
+		["줄비와 함께", "동행: 가까운 적 보조 공격 / 검: 회피 뒤 첫 공격에 파동"],
 	], func(i: int):
-		set_active_spirit("도톰" if i == 0 else "줄비")
-		_enter_dungeon())
+		var id := "도톰" if i == 0 else "줄비"
+		set_active_spirit(id)
+		# 선택은 함께 갈 영물만 정한다. 동행으로 들어가고, 장비 변신은 초상화로 따로 한다.
+		if player.gear != "":
+			player.gear = ""
+			spirit_nodes[id].become_companion()
+		_refresh_spirit_hud()
+		_enter_dungeon(), "동행으로 들어가요 · 초상화로 동행·장비 전환")
 
 
 func _enter_dungeon() -> void:
@@ -1295,6 +1309,8 @@ func _turn_wheel(right: bool) -> void:
 	if stage != Stage.Q5_DRAIN:
 		return
 	var done: bool = dungeon.turn_handle(right)
+	if _first("hint_wheel_turn") and not done:
+		hud.show_hint("손잡이는 누를 때마다 90도 돌아가요. 왼쪽 →, 오른쪽 ←가 되면 물이 빠져요", 4.5)
 	var arrows := ["↑", "→", "↓", "←"]
 	hud.toast("%s 손잡이: %s" % ["오른쪽" if right else "왼쪽", arrows[dungeon.handle_r if right else dungeon.handle_l]])
 	if done:
@@ -1330,7 +1346,27 @@ func _on_worker_waiting() -> void:
 
 func _on_boss_release() -> void:
 	sluice_spot.marked = true
-	hud.show_hint("물길 방출! 오른쪽 높은 발판의 수문 손잡이를 내리세요", 3.0)
+	_guide_release()
+
+
+## 물길 방출 예고 동안: 남은 초와 함께 “수문 내리기 → 발판 안에서 대기”를 단계별로 안내하고,
+## 목표 화살표를 수문(확보 전) → 안전 발판(확보 후)으로 바꾼다 (Codex Q5 검토).
+func _guide_release() -> void:
+	if boss.state != Boss.State.RELEASE_AIM:
+		if hud.hint_text.begins_with("물길 방출") or hud.hint_text.begins_with("수문 확보"):
+			hud.clear_hint()
+			hud.target_world = null
+		return
+	var left := ceili(boss.t)
+	if not dungeon.secured:
+		hud.target_world = Dungeon.SLUICE
+		hud.show_hint("물길 방출 %d초 — ① 수문 내리기 → ② 발판 안에서 대기" % left)
+	elif dungeon.in_safe_zone(player.position):
+		hud.target_world = null
+		hud.show_hint("수문 확보! 발판 안에서 대기 (%d초)" % left)
+	else:
+		hud.target_world = Dungeon.SAFE_ZONE.get_center()
+		hud.show_hint("수문 확보! ② 발판 안으로 들어가세요 (%d초)" % left)
 
 
 func _pull_sluice() -> void:
@@ -1434,6 +1470,7 @@ func _finish_prototype() -> void:
 			"시제품 끝 — 여행 준비 완료",
 			"첫 여행 임무: 사다리령의 운송 기록 확인",
 			"계약 고리 보관: %s" % ("길잇기 조합" if keeper == "조합" else "주민 공동 보관"),
+			"사다리령 여행은 다음 버전에서 이어집니다.",
 			"Lv.%d · %s · 영물: %s" % [GameState.level, GameState.weapon_label(), ", ".join(GameState.spirits)],
 			"플레이해 주셔서 감사합니다",
 		]))

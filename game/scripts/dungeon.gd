@@ -15,6 +15,8 @@ const HANDLE_L := Vector2(1292, 1020)
 const HANDLE_R := Vector2(1588, 1020)
 const PLAQUE := Vector2(1440, 1000)
 const SAFE_ZONE := Rect2(1560, 470, 104, 154)
+## 안전 발판 입구(왼쪽 아래)로 들어가는 고정 경유점. 정비공이 난간을 통과하지 않게 한다 (Codex Q5 검토).
+const SAFE_ENTRY: Array[Vector2] = [Vector2(1524, 600), Vector2(1588, 600)]
 const SLUICE := Vector2(1592, 488)
 const WAIT_SPOT := Vector2(1628, 578)
 const BOSS_HOME := Vector2(1440, 240)
@@ -184,3 +186,7 @@ func _draw_handle(p: Vector2, dir_i: int, ok: bool) -> void:
 	draw_line(p, p + d * 12.0, Color("f2d28b"), 3.0)
 	draw_line(p + d * 12.0, p + d * 6.0 + d.orthogonal() * 4.0, Color("f2d28b"), 3.0)
 	draw_line(p + d * 12.0, p + d * 6.0 - d.orthogonal() * 4.0, Color("f2d28b"), 3.0)
+	if ok:
+		# 맞은 방향: 색 말고 모양으로도 알 수 있게 체크 표시
+		draw_line(p + Vector2(10, -20), p + Vector2(14, -16), Color("9be7a0"), 2.5)
+		draw_line(p + Vector2(14, -16), p + Vector2(21, -25), Color("9be7a0"), 2.5)

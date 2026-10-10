@@ -970,10 +970,10 @@ func _test_q5() -> void:
 	# 영물 선택 → 던전
 	_teleport(m.hatch_spot.position + Vector2(0, 20))
 	await _interact(m.hatch_spot)
-	_check(m.hud.choice_active() and m.hud.choice_options.size() == 2, "내려가기 전 활성 영물 선택지 (도톰/줄비)")
+	_check(m.hud.choice_active() and m.hud.choice_options.size() == 2 and String(m.hud.choice_options[1][0]) == "줄비와 함께" and m.hud.choice_note.contains("동행·장비"), "내려가기 전 영물 선택: '도톰/줄비와 함께'와 동행·장비 안내")
 	m.hud.pick_choice(1)
 	await _wait(1.0)
-	_check(GameState.active_spirit == "줄비" and m.in_dungeon and m.stage == Main.Stage.Q5_ROOM1, "줄비를 골라 던전 1방 진입")
+	_check(GameState.active_spirit == "줄비" and p.gear == "" and m.hud.spirit_form == "동행" and m.in_dungeon and m.stage == Main.Stage.Q5_ROOM1, "줄비를 골라 동행 상태로 던전 1방 진입")
 	_check(p.position.distance_to(Dungeon.START) < 2.0 and m.camera.limit_left == int(Dungeon.X0), "던전 시작 위치와 카메라 범위 전환")
 
 	# 1방 → 2방
@@ -1015,6 +1015,19 @@ func _test_q5() -> void:
 		await _wait_until(func(): return wk.position.distance_to(p.position) < 50.0 or wk.wstate == Worker.WState.WAIT, 4.0)
 	var waiting: bool = await _wait_until(func(): return m.stage == Main.Stage.Q5_BOSS, 4.0)
 	_check(waiting and wk.wstate == Worker.WState.WAIT and dg.in_safe_zone(wk.position), "문을 지나 안전 지대까지 안내 → 대기")
+	# Codex Q5 검토: 같은 방에서 따라올 때 발판 왼쪽 난간을 통과하지 않고 입구로 들어온다
+	m.hud.skip_dialogue()  # 보스 소개 대사가 열려 있으면 정비공도 멈춰 있다
+	var railing := Rect2(1552, 470, 10, 104)
+	var crossed := [false]
+	wk.reset_at(Vector2(1480, 510), Worker.WState.FOLLOW)
+	_teleport(Vector2(1600, 510))
+	var watch := func():
+		if railing.has_point(wk.position):
+			crossed[0] = true
+	get_tree().process_frame.connect(watch)
+	await _wait_until(func(): return wk.wstate == Worker.WState.WAIT, 5.0)
+	get_tree().process_frame.disconnect(watch)
+	_check(wk.wstate == Worker.WState.WAIT and not crossed[0], "같은 방에서도 난간을 통과하지 않고 발판 입구 경유")
 	m.hud.skip_dialogue()
 	await _settle()
 	_check(b.state != Boss.State.SLEEP, "보스 거름집게 깨어남")
@@ -1055,8 +1068,10 @@ func _test_q5() -> void:
 	p.hp = p.max_hp
 	p.invuln = 0.0
 	b.force_pattern("release")
-	_check(m.sluice_spot.marked and m.hud.hint_text.begins_with("물길 방출"), "물길 방출 예고 → 수문 손잡이 안내")
-	await _wait(Boss.RELEASE_AIM_TIME + 0.3)
+	_check(absf(b.release_total - Boss.RELEASE_AIM_TIME_FIRST) < 0.01, "첫 물길 방출 예고 %.1f초" % Boss.RELEASE_AIM_TIME_FIRST)
+	await _settle()
+	_check(m.sluice_spot.marked and m.hud.hint_text.begins_with("물길 방출") and m.hud.target_world == Dungeon.SLUICE, "물길 방출 예고 → 남은 초·수문 방향 안내")
+	await _wait(b.release_total + 0.3)
 	_check(wk.hp == wk.max_hp - Boss.FLOOD_WORKER_DMG and p.hp == p.max_hp - Boss.FLOOD_DMG, "수문을 못 내리면 정비공 -%d, 플레이어 -%d" % [Boss.FLOOD_WORKER_DMG, Boss.FLOOD_DMG])
 	await _wait(Boss.FLOOD_TIME + Boss.VENT_TIME)
 
@@ -1067,9 +1082,11 @@ func _test_q5() -> void:
 	p.invuln = 0.0
 	b.force_pattern("release")
 	await _wait(0.5)
+	_check(absf(b.release_total - Boss.RELEASE_AIM_TIME) < 0.01, "이후 물길 방출 예고 %.1f초" % Boss.RELEASE_AIM_TIME)
 	await _interact(m.sluice_spot)
-	_check(dg.secured, "예고 중 수문 손잡이 → 안전 지대 확보")
-	await _wait(Boss.RELEASE_AIM_TIME)
+	await _settle()
+	_check(dg.secured and m.hud.hint_text.begins_with("수문 확보"), "예고 중 수문 손잡이 → 안전 지대 확보, 발판 대기 안내")
+	await _wait(b.release_total)
 	_check(wk.hp == wk_hp and p.hp == p.max_hp, "확보한 발판 안에서는 정비공·플레이어 모두 무사")
 	await _wait(Boss.FLOOD_TIME + Boss.VENT_TIME)
 
@@ -1077,7 +1094,7 @@ func _test_q5() -> void:
 	wk.hp = 1.0
 	b.hp = 100.0
 	b.force_pattern("release")
-	await _wait(Boss.RELEASE_AIM_TIME + 0.3)
+	await _wait(b.release_total + 0.3)
 	_check(wk.wstate == Worker.WState.DOWN and m.hud.fade > 0.0, "정비공 체력 0 → 실패 화면")
 	await _wait(3.0)
 	_check(wk.hp == wk.max_hp and wk.position == Dungeon.WAIT_SPOT and b.hp == b.max_hp and p.position == Dungeon.ROOM3_START and b.state != Boss.State.SLEEP, "재도전: 정비공 대기 위치·보스 체력 복구·방 입구")
@@ -1103,7 +1120,7 @@ func _test_q5() -> void:
 	await _wait(1.4)
 	_check(not m.in_dungeon and m.stage == Main.Stage.Q5_END and m.camera.limit_right == int(World.W), "마을로 돌아옴 (카메라 범위 복구)")
 	m.hud.skip_dialogue()
-	_check(m.hud.end_lines.size() >= 4 and String(m.hud.end_lines[2]).contains("주민"), "여행 준비 장면 → 시제품 끝 카드 (선택 반영)")
+	_check(m.hud.end_lines.size() >= 5 and String(m.hud.end_lines[2]).contains("주민") and String(m.hud.end_lines[3]).contains("다음 버전"), "여행 준비 장면 → 시제품 끝 카드 (선택 반영, 사다리령은 다음 버전 안내)")
 	m._complete_q5(0)
 	await _wait(1.4)
 	m.hud.skip_dialogue()

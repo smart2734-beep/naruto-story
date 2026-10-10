@@ -3,7 +3,7 @@ extends Node2D
 ## 직선 집게 → 바닥 쓸기 → 직선 집게 → 물길 방출 을 반복한다. 모든 패턴은 예고 뒤에 온다.
 ##   직선 집게: 플레이어 쪽 직선(폭 32) 예고 0.9초 → 뻗기 → 1.3초 빈틈(피해 1.5배)
 ##   바닥 쓸기: 몸 둘레 반지름 96 예고 1.0초 → 쓸기
-##   물길 방출: 3.2초 예고 → 방이 잠긴다. 수문 손잡이로 안전 지대를 확보하고 그 안에 있어야 안전 → 1.6초 배기(빈틈)
+##   물길 방출: 첫 회 4.5초·이후 4.0초 예고 (Codex Q5 검토의 첫 모바일 가설) → 방이 잠긴다. 수문 손잡이로 안전 지대를 확보하고 그 안에 있어야 안전 → 1.6초 배기(빈틈)
 ## 일반 회피(94px)만으로 모두 피할 수 있게 잡았다: 집게 반폭+몸 16+9 < 94, 근접(46)에서 쓸기 밖까지 96+9-46 < 94.
 
 signal aim_started(enemy)
@@ -22,7 +22,8 @@ const CLAW_RECOVER := 1.3
 const SWEEP_AIM_TIME := 1.0
 const SWEEP_R := 96.0
 const SWEEP_DMG := 16.0
-const RELEASE_AIM_TIME := 3.2
+const RELEASE_AIM_TIME_FIRST := 4.5
+const RELEASE_AIM_TIME := 4.0
 const FLOOD_TIME := 0.8
 const FLOOD_DMG := 20.0
 const FLOOD_WORKER_DMG := 30.0
@@ -42,6 +43,8 @@ var step := 0
 var flash := 0.0
 var anim := 0.0
 var hit_done := false
+var releases := 0  ## 이번 도전에서 물길 방출을 시작한 횟수 (첫 회만 예고가 길다)
+var release_total := RELEASE_AIM_TIME_FIRST
 var player  # player.gd
 var dungeon  # dungeon.gd
 var home := Vector2.ZERO
@@ -74,6 +77,7 @@ func reset_fight() -> void:
 	hp = max_hp
 	position = home
 	step = 0
+	releases = 0
 	state = State.SLEEP
 	if dungeon:
 		dungeon.flood = 0.0
@@ -111,7 +115,9 @@ func _start_next() -> void:
 			t = SWEEP_AIM_TIME
 		"release":
 			state = State.RELEASE_AIM
-			t = RELEASE_AIM_TIME
+			release_total = RELEASE_AIM_TIME_FIRST if releases == 0 else RELEASE_AIM_TIME
+			releases += 1
+			t = release_total
 			if dungeon:
 				dungeon.secured = false
 			release_started.emit()
@@ -168,7 +174,7 @@ func _physics_process(delta: float) -> void:
 		State.RELEASE_AIM:
 			t -= delta
 			if dungeon:
-				dungeon.flood = clampf(1.0 - t / RELEASE_AIM_TIME, 0.0, 1.0) * 0.35
+				dungeon.flood = clampf(1.0 - t / release_total, 0.0, 1.0) * 0.35
 			if t <= 0.0:
 				state = State.RELEASE_FLOOD
 				t = FLOOD_TIME
