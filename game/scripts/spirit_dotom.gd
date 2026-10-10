@@ -194,6 +194,12 @@ func _draw() -> void:
 		draw_circle(Vector2.ZERO, 7.0, Color("8a6a3a"))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		draw_line(o + Vector2(-7, -10), o + Vector2(7, -8), Color("5a4020"), 1.0)
+	if state == State.NEST and calm_enabled and still_t > 0.0:
+		# 기다림이 진행 중임을 보여주는 잎 고리 (멈춰 있으면 찬다)
+		var k := clampf(still_t / CALM_TIME, 0.0, 1.0)
+		draw_arc(Vector2(0, -2), 14.0, -PI / 2.0, -PI / 2.0 + TAU * k, 20, Color(0.56, 0.86, 0.35, 0.9), 2.0)
+		var leaf := Vector2(0, -2) + Vector2.UP.rotated(TAU * k) * 14.0
+		draw_circle(leaf, 2.5, Color("b0e070"))
 	if alert_t > 0.0:
 		draw_string(f, Vector2(-10, -14 - hop), "!", HORIZONTAL_ALIGNMENT_CENTER, 20, 12, Color("ffcc33"))
 	if state == State.NEST or state == State.WAIT or state == State.APPROACH:

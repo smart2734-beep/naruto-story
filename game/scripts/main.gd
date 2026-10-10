@@ -61,6 +61,8 @@ const TRANSFORM_COMBAT := 2.0
 const TRANSFORM_FX := 0.8
 const TRANSFORM_COMBAT_CD := 10.0
 const COMBAT_RADIUS := 220.0
+## 대화·작업대·암전 중에는 적과 위험 판정을 멈춘다. 다시 움직일 때 플레이어에게 잠깐 무적을 준다.
+const RESUME_GRACE := 0.8
 
 var world
 var player
@@ -98,6 +100,8 @@ var spirit_switch_cd: float:
 var _pending_gear := ""  ## 변신이 끝나면 적용할 장비 상태 ("" = 동행으로)
 var _pending_spirit := ""  ## 변신을 시작한 영물. 결과와 대기시간은 이 영물에만 적용한다.
 var _hook_marking := false
+var _paused := false
+var pan_offset := Vector2.ZERO  ## 착지 지점을 보여주는 짧은 카메라 이동
 var _transform_in_combat := false
 var _last_player_pos := Vector2.ZERO
 var _once: Dictionary = {}
@@ -388,8 +392,10 @@ func _process(delta: float) -> void:
 		_switch_cd[k] = maxf(float(_switch_cd[k]) - delta, 0.0)
 	hud.spirit_cd = spirit_switch_cd / TRANSFORM_COMBAT_CD
 
-	if not player.falling and not player.dead and world.update_weak(player.position, delta, player.airborne()):
+	_update_pause()
+	if not _paused and not player.falling and not player.dead and world.update_weak(player.position, delta, player.airborne()):
 		player.start_fall()
+	_update_landing_preview()
 
 	match stage:
 		Stage.TALK_DANU:
@@ -427,9 +433,56 @@ func _process(delta: float) -> void:
 
 	if shake > 0.0:
 		shake = maxf(shake - delta, 0.0)
-		camera.offset = CAMERA_LOOK_AHEAD + Vector2(randf_range(-3, 3), randf_range(-3, 3)) * shake * 2.0
+		camera.offset = CAMERA_LOOK_AHEAD + pan_offset + Vector2(randf_range(-3, 3), randf_range(-3, 3)) * shake * 2.0
 	else:
-		camera.offset = CAMERA_LOOK_AHEAD
+		camera.offset = CAMERA_LOOK_AHEAD + pan_offset
+	hud.spirit_status = player.gear_status() if player.gear != "" else _companion_status()
+
+
+## 필수 대화·작업대·암전 동안 적의 공격과 발판 붕괴를 멈춘다 (Codex Q3 검토 P1).
+## 퀘스트는 적을 처치하지 않고 우회해도 완료되므로, 대사를 읽는 동안 맞아서는 안 된다.
+func _update_pause() -> void:
+	var pause: bool = hud.busy()
+	if pause == _paused:
+		return
+	_paused = pause
+	for e in enemies:
+		if is_instance_valid(e):
+			e.set_physics_process(not pause)
+	if not pause:
+		player.invuln = maxf(player.invuln, RESUME_GRACE)
+
+
+func _companion_status() -> String:
+	match GameState.active_spirit:
+		"도톰":
+			return "숨은 발판 탐지"
+		"줄비":
+			return "연결쇠 탐지"
+	return ""
+
+
+## Q3 착지 미리보기: 틈 앞에서 지금 회피하면 어디에 닿는지 보여준다 (신발 한 걸음 포함).
+func _update_landing_preview() -> void:
+	world.preview = null
+	if stage != Stage.Q3_TRANSFORM and stage != Stage.Q3_GAP:
+		return
+	var gap: Rect2 = World.PITS["gap"]
+	var p: Vector2 = player.position
+	if p.x < gap.position.x - 110.0 or p.x > gap.position.x or p.y > gap.end.y or player.airborne() or player.falling:
+		return
+	var dir: Vector2 = player.move_input.normalized() if player.move_input.length() > 0.2 else player.facing
+	var land: Vector2 = p + dir * player.dodge_reach()
+	var ok: bool = not world.is_pit(land) and not world.is_unsafe_plank(land) and land.y > 40.0 and land.y < 160.0
+	world.preview = land
+	world.preview_ok = ok
+
+
+func _pan_to(target: Vector2) -> void:
+	var tw := create_tween()
+	tw.tween_property(self, "pan_offset", target - player.position, 0.5).set_trans(Tween.TRANS_SINE)
+	tw.tween_interval(0.8)
+	tw.tween_property(self, "pan_offset", Vector2.ZERO, 0.5).set_trans(Tween.TRANS_SINE)
 
 
 ## Q3: 동행 도톰이 끊긴 틈 근처에 오면 안전한 착지 발판을 찾아 잎 표시를 남긴다.
@@ -680,6 +733,7 @@ func _complete_q2() -> void:
 func _on_dotom_marked() -> void:
 	if stage == Stage.Q3_FIND:
 		hud.toast("도톰이 안전한 발판에 잎을 남겼다")
+		_pan_to(World.SAFE_LANDING.get_center())
 		_enter_stage(Stage.Q3_TRANSFORM)
 
 
@@ -1135,6 +1189,11 @@ func _on_player_fell() -> void:
 	await get_tree().create_timer(0.6).timeout
 	world.reset_weak()
 	player.respawn(at, practice)
+	if practice:
+		# 연습 구간: 결력과 함께 한 걸음 대기도 초기화해 바로 다시 해 볼 수 있게 한다 (Codex Q3 검토 P2).
+		player.step_cd = 0.0
+		if _first("hint_practice_reset"):
+			hud.show_hint("연습 구간이라 결력과 한 걸음 대기를 다시 채웠어요. 초록 원이 잎 위에 오면 회피!", 4.5)
 	camera.reset_smoothing()
 	var node = active_node()
 	if node != null and node.visible:

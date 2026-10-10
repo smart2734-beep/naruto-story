@@ -33,6 +33,7 @@ var spirit_name := ""  ## 활성 영물 이름. "" 이면 초상화를 숨긴다
 var spirit_form := ""  ## "동행", "신발", "검"
 var spirit_cd := 0.0  ## 전환 대기 비율 0~1
 var spirit_can_swap := false
+var spirit_status := ""  ## 초상화 아래 상태 문구: 한 걸음 준비 / N초 / 결력 부족, 동행 효과 등
 
 var hint_text := ""
 var hint_time := -1.0  ## < 0 이면 지울 때까지 유지
@@ -608,8 +609,11 @@ func _draw_portrait() -> void:
 	if _portrait_index != -1 and spirit_can_swap and not _portrait_long_sent:
 		_canvas.draw_arc(c, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * _portrait_held / LONG_PRESS, 40, C_GOLD_LIGHT, 4.0)
 	_text(Vector2(c.x - 80, c.y + r + 26), spirit_name + " · " + spirit_form, 20, Color("d8f0b0"), HORIZONTAL_ALIGNMENT_CENTER, 160)
+	if spirit_status != "":
+		var ready := spirit_status.ends_with("준비") or not (spirit_status.contains("초") or spirit_status.contains("부족"))
+		_text(Vector2(c.x - 90, c.y + r + 50), spirit_status, 18, Color("9be7a0") if ready else Color("ffb08a"), HORIZONTAL_ALIGNMENT_CENTER, 180)
 	if spirit_can_swap:
-		_text(Vector2(c.x - 80, c.y + r + 48), "길게 눌러 교체", 16, Color(C_TEXT, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 160)
+		_text(Vector2(c.x - 80, c.y + r + 72), "길게 눌러 교체", 16, Color(C_TEXT, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 160)
 
 
 func _draw_dialogue(s: Vector2) -> void:

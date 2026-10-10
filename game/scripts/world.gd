@@ -70,6 +70,8 @@ var anchor_built := false
 var gap_fixed := false
 var leaf_marks: Array[Vector2] = []
 var hatch_open := false
+var preview = null  ## Q3 착지 미리보기 위치 (Vector2 또는 null)
+var preview_ok := false
 
 ## 약한 발판. 오래 서 있으면(delay초) 무너진다. hidden 발판은 도톰이 동행일 때만 구분된다.
 var weak_planks: Array = [
@@ -194,6 +196,14 @@ func update_weak(p: Vector2, delta: float, airborne: bool) -> bool:
 	return collapsed
 
 
+## 드러난 위험 발판(숨은 약한 발판) 위인가. 미리보기용.
+func is_unsafe_plank(p: Vector2) -> bool:
+	for wp in weak_planks:
+		if wp["hidden"] and not gap_fixed and (wp["rect"] as Rect2).has_point(p):
+			return true
+	return false
+
+
 func reset_weak() -> void:
 	for wp in weak_planks:
 		wp["broken"] = false
@@ -235,6 +245,15 @@ func _draw() -> void:
 
 	_draw_west(water_col)
 	_draw_east(water_col)
+
+	if preview != null:
+		var lp: Vector2 = preview
+		var col := Color("8fdc5a") if preview_ok else Color("ff795f")
+		draw_arc(lp, 9.0, 0, TAU, 20, col, 2.5)
+		draw_circle(lp, 3.0, col)
+		if not preview_ok:
+			draw_line(lp + Vector2(-5, -5), lp + Vector2(5, 5), col, 2.0)
+			draw_line(lp + Vector2(5, -5), lp + Vector2(-5, 5), col, 2.0)
 
 	if goal != null:
 		var g: Vector2 = goal

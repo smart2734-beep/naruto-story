@@ -108,6 +108,7 @@ func _autotest() -> void:
 		await _section("영물 규칙", _test_spirit_rules)
 		await _section("Q4", _test_q4)
 		await _section("HUD", _test_hud)
+		await _section("Codex 재현", _test_codex_review)
 	for line in _summary:
 		print(line)
 	print("=== RESULT: %s (%d fail) ===" % ["PASS" if fails.is_empty() else "FAIL", fails.size()])
@@ -337,7 +338,7 @@ func _test_q3() -> void:
 	await _wait(0.2)
 	_check(p.falling, "잎 표시가 없는 발판에 착지하면 붕괴")
 	await _wait(0.8)
-	p.step_cd = 0.0
+	_check(p.step_cd == 0.0 and p.gyeol == p.max_gyeol, "연습 실패 복귀 시 결력과 한 걸음 대기를 함께 초기화")
 	# 잎 표시 발판으로 건너기
 	_teleport(Vector2(630, 60))
 	p.gyeol = 100.0
@@ -430,8 +431,8 @@ func _screenshot(path: String, scenario: String) -> void:
 			await _wait(0.35)
 		"q2_calm":
 			await _to_calm()
-			_teleport(m.dotom.position + Vector2(-80, 10))
-			await _wait(0.6)
+			_teleport(m.dotom.position + Vector2(-110, 10))
+			await _wait(0.8)
 		"q2_follow":
 			await _to_calm()
 			_teleport(m.dotom.position + Vector2(-100, 0))
@@ -440,7 +441,7 @@ func _screenshot(path: String, scenario: String) -> void:
 			await _wait(2.5)
 			_teleport(m.dotom.position + Vector2(50, 20))
 			await _wait(0.4)
-		"q3_marked", "q3_shoe", "q3_patrol", "q3_done":
+		"q3_marked", "q3_shoe", "q3_patrol", "q3_done", "q3_preview":
 			await _to_q3()
 			_teleport(Main.GAP_START)
 			m.dotom.position = Main.GAP_START + Vector2(-20, 10)
@@ -452,7 +453,10 @@ func _screenshot(path: String, scenario: String) -> void:
 				m.hud.clear_hint()
 				_teleport(Vector2(630, 60))
 				await _wait(0.3)
-			if scenario == "q3_shoe":
+			if scenario == "q3_preview":
+				m.hud.forced_move = Vector2.RIGHT
+				await _wait(0.2)
+			elif scenario == "q3_shoe":
 				m.hud.forced_move = Vector2.RIGHT
 				m.player.move_input = Vector2.RIGHT
 				m.player.try_dodge()
@@ -859,3 +863,67 @@ func _to_q4() -> void:
 	await _interact(m.dogyeom)
 	m.hud.toasts.clear()
 	m.hud.clear_hint()
+
+## docs/reviews/q3-review-2026-10-11.md 의 재현 조건을 본 점검에도 남긴다.
+func _test_codex_review() -> void:
+	var p = m.player
+	# P1: 필수 대화 중에는 적이 공격하지 않는다 (대사를 즉시 넘기지 않고 읽는 동안)
+	var foe = Patrol.new()
+	foe.min_x = 520.0
+	foe.max_x = 520.0
+	m._add_enemy(foe, Vector2(520, 100), "patrol")
+	foe.player = p
+	foe.facing = -1.0
+	foe.turn_wait = 999.0
+	m.hud.skip_dialogue()
+	p.respawn(Vector2(460, 100))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	await _settle()
+	m.hud.start_dialogue([["시험", "대사를 읽는 동안 순찰기가 정면에 있다."]])
+	await _settle()
+	var frozen_state: int = foe.state
+	var frozen_t: float = foe.t
+	await _wait(2.5)
+	_check(p.hp == p.max_hp and not p.dead and foe.state == frozen_state and foe.t == frozen_t, "대사를 읽는 2.5초 동안 피해 없음, 적 정지")
+	m.hud.skip_dialogue()
+	await _settle()
+	_check(p.invuln > 0.0, "대화가 끝나면 잠깐 무적으로 재개")
+	foe.take_hit(9999.0, Vector2.ZERO)
+
+	# P1: 덩굴딱정벌레 돌진이 플레이어 몸에 막히지 않고 피해를 준다
+	_check(p.collision_layer == p.PLAYER_LAYER and (p.collision_layer & 3) == 0, "플레이어는 벽·틈과 다른 충돌 레이어")
+	var bt = Beetle.new()
+	m._add_enemy(bt, Vector2(470, 220), "beetle")
+	bt.player = p
+	p.respawn(Vector2(430, 120))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	p.attack_cd = 999.0
+	_check(await _wait_state(bt, Beetle.State.CHARGE, 5.0), "딱정벌레가 돌진")
+	await _wait(0.6)
+	_check(p.hp == p.max_hp - bt.DAMAGE, "예고를 무시하면 돌진 피해 %d (체력 %d)" % [bt.DAMAGE, roundi(p.hp)])
+	p.attack_cd = 0.0
+	bt.take_hit(9999.0, Vector2.ZERO)
+
+	# 디자인: 착지 미리보기 (Q3 단계에서 틈 앞)
+	var keep_stage = m.stage
+	m._enter_stage(Main.Stage.Q3_GAP)
+	m.world.gap_fixed = false
+	m.world.set_pit("gap", true)
+	p.respawn(Vector2(630, 60))
+	p.gear = "도톰"
+	p.step_cd = 0.0
+	p.gyeol = 100.0
+	m.hud.forced_move = Vector2.RIGHT
+	await _wait(0.05)
+	var ok_preview: bool = m.world.preview != null and m.world.preview_ok
+	p.step_cd = 5.0
+	await _settle()
+	var short_preview: bool = m.world.preview != null and not m.world.preview_ok
+	m.hud.forced_move = null
+	_check(ok_preview and short_preview, "착지 미리보기: 한 걸음 가능하면 초록, 대기 중이면 빨강")
+	_check(p.gear_status() == "한 걸음 5초", "초상화 아래 상태 문구 (%s)" % p.gear_status())
+	m.world.fix_gap()
+	p.gear = ""
+	m._enter_stage(keep_stage)

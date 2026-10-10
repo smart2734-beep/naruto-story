@@ -51,6 +51,8 @@ const WAVE_DMG := 14.0
 ## 물길 장도 특성 (기획서 7장): 회피 직후 공격 시 결력 3 회복, 6초 대기
 const TRAIT_GYEOL := 3.0
 const TRAIT_CD := 6.0
+## 충돌 레이어: 1 벽·물, 2 진흙·틈, 3(값 4) 플레이어. 적은 1|2만 검사하므로 플레이어 몸에 막히지 않는다.
+const PLAYER_LAYER := 4
 const MASK_NORMAL := 1 | 2
 const MASK_AIRBORNE := 1
 
@@ -70,9 +72,13 @@ var gear := ""
 var shoe: bool:
 	get:
 		return gear == "도톰"
+	set(v):
+		gear = "도톰" if v else ("" if gear == "도톰" else gear)
 var blade: bool:
 	get:
 		return gear == "줄비"
+	set(v):
+		gear = "줄비" if v else ("" if gear == "줄비" else gear)
 
 var dodge_t := 0.0
 var dodge_cd := 0.0
@@ -105,6 +111,7 @@ var trait_cd := 0.0
 
 func _ready() -> void:
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	collision_layer = PLAYER_LAYER
 	collision_mask = MASK_NORMAL
 	var shape := CircleShape2D.new()
 	shape.radius = 9.0
@@ -215,6 +222,27 @@ func _try_extra_step() -> void:
 	step_cd = STEP_CD
 	invuln = maxf(invuln, STEP_TIME + 0.05)
 	extra_step_used.emit()
+
+
+## 회피·한 걸음 상태 문구 (HUD 초상화 아래). 사용 가능·대기·결력 부족을 구분한다.
+func gear_status() -> String:
+	if gear == "도톰":
+		if step_cd > 0.0:
+			return "한 걸음 %d초" % ceili(step_cd)
+		return "한 걸음 준비" if gyeol >= STEP_COST else "한 걸음: 결력 부족"
+	if gear == "줄비":
+		if wave_cd > 0.0:
+			return "파동 %d초" % ceili(wave_cd)
+		return "파동 준비" if gyeol >= WAVE_COST else "파동: 결력 부족"
+	return ""
+
+
+## 회피(+신발 한 걸음)로 닿는 거리. 착지 미리보기에 쓴다.
+func dodge_reach() -> float:
+	var d := DODGE_SPEED * DODGE_TIME
+	if shoe and step_cd <= 0.0 and gyeol >= STEP_COST:
+		d += STEP_SPEED * STEP_TIME
+	return d
 
 
 func can_use_skill() -> bool:
