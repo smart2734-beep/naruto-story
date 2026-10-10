@@ -135,7 +135,7 @@ func _ready() -> void:
 	dungeon = Dungeon.new()
 	add_child(dungeon)
 
-	danu = _make_npc("단우", Vector2(190, 1720), Color("4a5a3a"), Color("c8a060"), Color("2a2a2a"))
+	danu = _make_npc("단우", Vector2(190, 1720), Color("4a5a3a"), Color("c8a060"), Color("2a2a2a"), preload("res://assets/characters/danu-frames.tres"))
 	crate = _make_npc("부품 상자", Vector2(300, 1700), Color.WHITE, Color.WHITE, Color.WHITE)
 	crate.kind = "crate"
 	crate.action_label = "받기"
@@ -305,8 +305,9 @@ func _make_spot(label_name: String, pos: Vector2, action: String):
 	return n
 
 
-func _make_npc(npc_name: String, pos: Vector2, body: Color, accent: Color, hair: Color):
+func _make_npc(npc_name: String, pos: Vector2, body: Color, accent: Color, hair: Color, frames: SpriteFrames = null):
 	var n = Interactable.new()
+	n.frames = frames
 	n.display_name = npc_name
 	n.position = pos
 	n.body_color = body

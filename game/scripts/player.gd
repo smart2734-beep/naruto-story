@@ -53,6 +53,9 @@ const TRAIT_GYEOL := 3.0
 const TRAIT_CD := 6.0
 ## 충돌 레이어: 1 벽·물, 2 진흙·틈, 3(값 4) 플레이어. 적은 1|2만 검사하므로 플레이어 몸에 막히지 않는다.
 const PLAYER_LAYER := 4
+const SpriteRig := preload("res://scripts/sprite_rig.gd")
+const FRAMES := preload("res://assets/characters/apprentice-frames.tres")
+const CRATE_TEX := preload("res://assets/props/parts-crate.png")
 const MASK_NORMAL := 1 | 2
 const MASK_AIRBORNE := 1
 
@@ -103,6 +106,7 @@ var since_action := 99.0
 var hurt_flash := 0.0
 var walk_t := 0.0
 var fall_t := 0.0
+var rig  # sprite_rig.gd — 몸 그림. 효과는 이 노드의 _draw가 그 위에 그린다.
 var post_dodge_t := 0.0
 var post_dodge_used := true
 var wave_cd := 0.0
@@ -113,6 +117,9 @@ func _ready() -> void:
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	collision_layer = PLAYER_LAYER
 	collision_mask = MASK_NORMAL
+	rig = SpriteRig.new()
+	add_child(rig)
+	rig.setup(FRAMES)
 	var shape := CircleShape2D.new()
 	shape.radius = 9.0
 	var col := CollisionShape2D.new()
@@ -179,6 +186,8 @@ func _physics_process(delta: float) -> void:
 
 	if not airborne() and world and world.is_pit(global_position):
 		start_fall()
+
+	_update_rig()
 
 	since_action += delta
 	if since_action > GYEOL_REGEN_DELAY:
@@ -405,6 +414,17 @@ func _skill_hits() -> void:
 			e.take_hit(SKILL_DMG * damage_multiplier(), global_position)
 
 
+## 몸 스프라이트: 이동 방향 애니메이션, 피격 붉은 깜빡임, 무적 점멸, 낙하 중 숨김.
+func _update_rig() -> void:
+	if rig == null:
+		return
+	rig.visible = not falling
+	rig.update_motion(velocity if not dead else Vector2.ZERO)
+	var visible_now := invuln <= 0.0 or airborne() or guard_t > 0.0 or int(invuln * 20.0) % 2 == 0
+	rig.sprite.visible = visible_now
+	rig.sprite.modulate = Color(1.0, 0.45, 0.45) if hurt_flash > 0.0 else Color.WHITE
+
+
 func _draw() -> void:
 	if falling:
 		# 빠지는 중: 점점 작아진다
@@ -412,11 +432,6 @@ func _draw() -> void:
 		draw_circle(Vector2.ZERO, 8.0 * s, Color("2d3e5c"))
 		draw_arc(Vector2.ZERO, 14.0 * (1.0 - s) + 6.0, 0, TAU, 16, Color(1, 1, 1, 0.5 * s), 1.5)
 		return
-
-	# 그림자
-	draw_set_transform(Vector2(0, 8), 0.0, Vector2(1.0, 0.4))
-	draw_circle(Vector2.ZERO, 10.0, Color(0, 0, 0, 0.3))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	if airborne() or skill_t > 0.0:
 		var dir := dodge_dir if airborne() else skill_dir
@@ -426,37 +441,20 @@ func _draw() -> void:
 			draw_circle(-dir * 9.0 * i, 9.0 - i, trail)
 
 	var visible_now := invuln <= 0.0 or airborne() or guard_t > 0.0 or int(invuln * 20.0) % 2 == 0
-	var body := Color("2d3e5c")
-	if hurt_flash > 0.0:
-		body = Color("e05050")
 	if visible_now:
-		var bob := sin(walk_t) * 1.0 if velocity.length() > 1.0 else 0.0
-		# 신발 (도톰 변신이면 이끼 무늬)
-		var shoe_col := Color("6a8a40") if shoe else Color("3a2a20")
-		draw_circle(Vector2(-4, 9), 3.0, shoe_col)
-		draw_circle(Vector2(4, 9), 3.0, shoe_col)
+		# 영물 장비 표식은 몸 그림 위에 따로 그린다 (README 5항): 도톰 신발 = 발등 이끼 무늬
 		if shoe:
-			draw_circle(Vector2(-4, 8), 1.2, Color("b0e070"))
-			draw_circle(Vector2(4, 8), 1.2, Color("b0e070"))
-		draw_circle(Vector2(0, 2 + bob), 8.0, body)
-		draw_circle(Vector2(0, -7 + bob), 6.0, Color("f0d2b0"))
-		# 머리띠(조합 표식 색) — 특정 작품의 이마 보호대처럼 보이지 않도록 천 끈으로 표현
-		draw_line(Vector2(-6, -9 + bob), Vector2(6, -9 + bob), Color("7fd6c2"), 2.0)
-		draw_line(Vector2(-6, -9 + bob), Vector2(-10, -6 + bob), Color("7fd6c2"), 1.5)
-		var tip := facing * 13.0 + Vector2(0, 2)
-		var side := facing.orthogonal() * 3.0
-		draw_colored_polygon(PackedVector2Array([tip, facing * 8.0 + side + Vector2(0, 2), facing * 8.0 - side + Vector2(0, 2)]), Color("e8c070"))
+			for x in [-4.0, 4.0]:
+				draw_circle(Vector2(x, 7), 2.6, Color("6a8a40"))
+				draw_circle(Vector2(x, 6), 1.2, Color("b0e070"))
 		if blade:
 			# 줄비 겹날: 비늘 무늬 칼
-			var hand := facing.orthogonal() * 9.0 + Vector2(0, 2 + bob)
+			var hand := facing.orthogonal() * 9.0 + Vector2(0, 0)
 			draw_line(hand, hand + facing * 15.0, Color("c8d0d8"), 2.5)
 			for i in 3:
 				draw_circle(hand + facing * (5.0 + i * 4.0), 1.3, Color("5fc5c9"))
 		if carrying:
-			draw_rect(Rect2(-6, -24 + bob, 12, 9), Color("9a6a3a"))
-			draw_rect(Rect2(-6, -24 + bob, 12, 9), Color("5a3a1a"), false, 1.0)
-			draw_line(Vector2(0, -24 + bob), Vector2(0, -15 + bob), Color("5a3a1a"), 1.0)
-
+			draw_texture_rect(CRATE_TEX, Rect2(-8, -46, 16, 16), false)
 	if guard_t > 0.0:
 		var a := facing.angle()
 		draw_arc(Vector2.ZERO, 16.0, a - 1.2, a + 1.2, 14, Color(0.9, 0.95, 1.0, 0.9), 3.0)

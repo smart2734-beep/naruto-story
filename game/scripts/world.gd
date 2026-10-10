@@ -88,6 +88,24 @@ var _grass: PackedVector2Array = []
 var _marsh: PackedVector2Array = []
 var _pebbles: PackedVector2Array = []
 
+## 교육원 아트 v0.1 (game/assets/README.md). 타일 좌표는 academy-manifest.json의 (열,행).
+const TEX_TILES := preload("res://assets/tiles/academy-tiles.png")
+const TEX_ARCH := preload("res://assets/props/stone-arch.png")
+const TEX_LAMP := preload("res://assets/props/brass-lamp.png")
+const TEX_BOOKSHELF := preload("res://assets/props/oak-bookshelf.png")
+const T_STONE_A := Vector2i(0, 0)
+const T_STONE_B := Vector2i(1, 0)
+const T_STONE_C := Vector2i(2, 0)
+const T_STONE_MOSS := Vector2i(3, 0)
+const T_WOOD_A := Vector2i(0, 1)
+const T_EARTH := Vector2i(2, 1)
+const T_GRASS := Vector2i(3, 1)
+const T_WALL := Vector2i(0, 2)
+const T_WALL_BASE := Vector2i(1, 2)
+const T_PATH_EDGE := Vector2i(0, 3)
+const T_BRASS := Vector2i(1, 3)
+const VILLAGE_TOP := 1472.0
+
 
 func _ready() -> void:
 	var blockers: Array[Rect2] = [
@@ -326,24 +344,32 @@ func _draw_west(water_col: Color) -> void:
 	for i in 5:
 		_draw_reeds(REEDS[i])
 
-	# 마을
-	draw_rect(Rect2(0, FIELD_BOTTOM, COL_W, H - FIELD_BOTTOM), Color("c8b088"))
-	for p in _pebbles:
-		draw_rect(Rect2(p, Vector2(2, 2)), Color("ae966e"))
-	draw_rect(Rect2(150, FIELD_BOTTOM, 84, H - FIELD_BOTTOM), Color("bba27a"))
-	for r in HOUSES:
-		draw_rect(r, Color("a07850"))
-		draw_rect(Rect2(r.position.x - 4, r.position.y - 10, r.size.x + 8, r.size.y * 0.55), Color("7a4a3a"))
-		draw_rect(Rect2(r.position.x + r.size.x * 0.5 - 7, r.end.y - 18, 14, 18), Color("4a3020"))
-		draw_rect(Rect2(r.position.x + 8, r.end.y - 22, 10, 8), Color("e8d8a0"))
+	# 마을 (이음터 시작 구역): 교육원 아트 v0.1 타일. 충돌은 기존 HOUSES·FENCES·우물이 그대로 기준이다.
+	_draw_village_tiles()
+	for i in HOUSES.size():
+		var r: Rect2 = HOUSES[i]
+		_tile_fill(r, T_WALL)
+		_tile_fill(Rect2(r.position.x, r.end.y - 8, r.size.x, 8), T_WALL_BASE)
+		if i == 0:
+			# 작은 서고: 참나무 책장 (바닥 기준 (32,58))
+			draw_texture(TEX_BOOKSHELF, Vector2(r.get_center().x - 32, r.end.y - 58))
+		else:
+			draw_rect(Rect2(r.position.x + r.size.x * 0.5 - 7, r.end.y - 18, 14, 18), Color("49352c"))
+			draw_rect(Rect2(r.position.x + 8, r.end.y - 22, 10, 8), Color("f2d28b"))
+		draw_rect(Rect2(r.position.x - 4, r.position.y - 10, r.size.x + 8, r.size.y * 0.55), Color("6a4a3a"))
+		draw_rect(Rect2(r.position.x - 4, r.position.y - 10, r.size.x + 8, 4), Color("7a5a48"))
+		if i == 1:
+			# 교육원 작업동(도겸): 너비 96의 석조 아치를 정면에 맞춘다 (바닥 기준 (48,95))
+			draw_texture(TEX_ARCH, Vector2(r.get_center().x - 48, r.end.y - 95))
 	for r in FENCES:
-		draw_rect(r, Color("8a6a40"))
+		_tile_fill(r, T_WOOD_A)
 		for x in range(int(r.position.x), int(r.end.x), 12):
-			draw_rect(Rect2(x, r.position.y - 4, 4, r.size.y + 4), Color("6a4a28"))
+			draw_rect(Rect2(x, r.position.y - 4, 4, r.size.y + 4), Color("49352c"))
 	_draw_south_margin()
-	draw_rect(Rect2(140, 1460, 10, 28), Color("5a3a20"))
-	draw_rect(Rect2(234, 1460, 10, 28), Color("5a3a20"))
-	draw_rect(Rect2(136, 1456, 112, 6), Color("7fd6c2"))
+	# 북문 기둥 위의 황동 램프 (기둥은 울타리 충돌 안이라 길을 가리지 않는다, 바닥 기준 (16,46))
+	for px in [145.0, 239.0]:
+		draw_texture(TEX_LAMP, Vector2(px - 16, 1488 - 46))
+		draw_circle(Vector2(px, 1450), 10.0, Color(0.95, 0.82, 0.55, 0.12 + 0.04 * sin(t * 3.0 + px)))
 	draw_circle(WELL_POS, 14.0, Color("7a7a78"))
 	draw_circle(WELL_POS, 9.0, Color("2f4f68"))
 
@@ -520,3 +546,39 @@ func _draw_mill(water_col: Color, flow: float) -> void:
 		draw_rect(HATCH, Color("5a4028"))
 		draw_line(HATCH.position + Vector2(0, 20), HATCH.position + Vector2(40, 20), Color("3a2818"), 2.0)
 		draw_circle(HATCH.get_center(), 4.0, Color("6a6a70"))
+
+
+## 타일 한 칸을 rect에 맞춰 반복해 그린다. 가장자리는 잘라서 맞춘다 (32px 격자에 맞지 않는 기존 집 크기 대응).
+func _tile_fill(rect: Rect2, tile: Vector2i) -> void:
+	var y := rect.position.y
+	while y < rect.end.y - 0.01:
+		var h := minf(32.0, rect.end.y - y)
+		var x := rect.position.x
+		while x < rect.end.x - 0.01:
+			var w := minf(32.0, rect.end.x - x)
+			draw_texture_rect_region(TEX_TILES, Rect2(x, y, w, h), Rect2(Vector2(tile) * 32.0, Vector2(w, h)))
+			x += 32.0
+		y += 32.0
+
+
+func _tile_at(col: int, row: int) -> Vector2i:
+	var cx := col * 32 + 16
+	var cy := row * 32 + 16
+	if row == 46 and (col == 5 or col == 6):
+		return T_BRASS  # 북문 문턱의 황동 선
+	if col == 5 or col == 6:
+		if Vector2(cx, cy).distance_to(WELL_POS) < 40.0:
+			return T_STONE_C
+		return T_STONE_A if (row + col) % 2 == 0 else T_STONE_B
+	if col == 4 or col == 7:
+		return T_PATH_EDGE if col == 4 else T_STONE_MOSS
+	if (col <= 1 or col >= 10) and row >= 52:
+		return T_GRASS
+	return T_EARTH
+
+
+func _draw_village_tiles() -> void:
+	for row in range(int(VILLAGE_TOP / 32.0), int(ceil(H / 32.0))):
+		for col in range(0, int(COL_W / 32.0)):
+			var cell := Rect2(col * 32, row * 32, 32, 32)
+			draw_texture_rect_region(TEX_TILES, cell, Rect2(Vector2(_tile_at(col, row)) * 32.0, Vector2(32, 32)))

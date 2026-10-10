@@ -104,7 +104,13 @@ func _dodge_toward(dir: Vector2) -> void:
 func _autotest() -> void:
 	await _wait(0.3)
 	var only_q1 := OS.get_cmdline_user_args().has("--q1")
-	await _section("Q1", _test_q1)
+	var only_art := OS.get_cmdline_user_args().has("--art")
+	if not only_q1:
+		await _section("아트", _test_art)
+	if only_art:
+		only_q1 = true
+	else:
+		await _section("Q1", _test_q1)
 	if not only_q1:
 		await _section("Q2", _test_q2)
 		await _section("Q3", _test_q3)
@@ -1205,3 +1211,37 @@ func _setup_q5(scenario: String) -> void:
 			await _wait(1.4)
 			m.hud.skip_dialogue()
 			await _wait(0.3)
+
+
+## 교육원 아트 v0.1 적용 확인 (game/assets/README.md 적용 지침). 그림만 바뀌고 위치·충돌·방향 판정은 그대로여야 한다.
+func _test_art() -> void:
+	var p = m.player
+	var rig = p.rig
+	_check(rig != null and rig.sprite.sprite_frames != null and rig.sprite.sprite_frames.has_animation("walk_left"), "플레이어 스프라이트 연결 (idle/walk 4방향)")
+	_check(rig.sprite.offset == Vector2(0, -10) and rig.sprite.centered and rig.sprite.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "오프셋 (0,-10), 가운데 정렬, NEAREST")
+	_check(rig.show_behind_parent, "몸 그림은 효과(예고·피격·기술) 뒤에 그린다")
+	var shape: CircleShape2D = null
+	for ch in p.get_children():
+		if ch is CollisionShape2D:
+			shape = ch.shape
+	_check(shape != null and is_equal_approx(shape.radius, 9.0), "충돌 반경 9 유지")
+	var start: Vector2 = p.position
+	var facing_before: Vector2 = p.facing
+	m.hud.forced_move = Vector2.LEFT
+	await _wait(0.3)
+	var walking: String = rig.sprite.animation
+	m.hud.forced_move = null
+	await _wait(0.2)
+	_check(walking == "walk_left" and rig.sprite.animation == "idle_left", "왼쪽 이동 → walk_left, 멈추면 idle_left 유지")
+	_teleport(start)
+	p.facing = facing_before
+	var d = m.danu
+	_check(d.rig != null and d.rig.sprite.animation.begins_with("idle"), "단우 스프라이트 연결")
+	p.invuln = 0.0
+	p.take_damage(1.0, p.position + Vector2(0, 10))
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	_check(rig.sprite.modulate != Color.WHITE, "피격 시 몸 그림이 붉게 깜빡임")
+	p.hp = p.max_hp
+	await _wait(0.8)
+	_check(m.hud._canvas.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR and m.hud.PORTRAIT.get_width() == 1254, "초상화 원본(1254) 그대로, UI에서 LINEAR")

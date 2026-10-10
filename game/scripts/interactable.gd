@@ -12,10 +12,20 @@ var marked := false
 var checked := false
 var walk_target = null
 var t := 0.0
+## 스프라이트가 있으면(교육원 아트 v0.1: 단우) 도형 몸 대신 쓴다. 이름표·표시는 그 위에 그린다.
+var frames: SpriteFrames = null
+var rig
+var _last_pos := Vector2.ZERO
+const CRATE_TEX := preload("res://assets/props/parts-crate.png")
 
 
 func _ready() -> void:
 	add_to_group("interactable")
+	_last_pos = position
+	if frames != null:
+		rig = preload("res://scripts/sprite_rig.gd").new()
+		add_child(rig)
+		rig.setup(frames)
 
 
 func _process(delta: float) -> void:
@@ -24,19 +34,21 @@ func _process(delta: float) -> void:
 		position = position.move_toward(walk_target, 70.0 * delta)
 		if position.distance_to(walk_target) < 1.0:
 			walk_target = null
+	if rig != null and delta > 0.0:
+		rig.update_motion((position - _last_pos) / delta)
+	_last_pos = position
 	queue_redraw()
 
 
 func _draw() -> void:
-	draw_set_transform(Vector2(0, 8), 0.0, Vector2(1.0, 0.4))
-	draw_circle(Vector2.ZERO, 10.0, Color(0, 0, 0, 0.3))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if rig == null and kind != "hook" and kind != "spot":
+		draw_set_transform(Vector2(0, 8), 0.0, Vector2(1.0, 0.4))
+		draw_circle(Vector2.ZERO, 10.0, Color(0, 0, 0, 0.3))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	if kind == "crate":
-		draw_rect(Rect2(-9, -8, 18, 15), Color("9a6a3a"))
-		draw_rect(Rect2(-9, -8, 18, 15), Color("5a3a1a"), false, 1.5)
-		draw_line(Vector2(-9, -1), Vector2(9, -1), Color("5a3a1a"), 1.5)
-		draw_circle(Vector2(0, -1), 2.0, Color("c0c8d0"))
+		# 부품 상자 (32×32, 바닥 기준 (16,27) → 로컬 (0,8))
+		draw_texture(CRATE_TEX, Vector2(-16, 8 - 27))
 	elif kind == "rope":
 		# 느슨한 줄이 걸린 말뚝. 조사하면 checked.
 		draw_rect(Rect2(-3, -14, 6, 20), Color("5a3a20"))
@@ -67,17 +79,18 @@ func _draw() -> void:
 				draw_line(Vector2(15 + a, -4), Vector2(12 + a, -1), Color("5fc5c9"), 2.0)
 	elif kind == "spot":
 		pass  # 월드가 그리는 장치(손잡이 등)의 상호작용 지점
-	else:
+	elif rig == null:
 		draw_circle(Vector2(0, 2), 8.0, body_color)
 		draw_line(Vector2(-7, -2), Vector2(7, 6), accent, 2.0)
 		draw_circle(Vector2(0, -7), 6.0, Color("f0d2b0"))
 		draw_arc(Vector2(0, -8), 6.0, PI, TAU, 10, hair, 3.0)
 
 	var f := GameState.world_font
+	var lift := -16.0 if rig != null else 0.0  # 32×40 스프라이트 머리 위로
 	if display_name != "" and ((kind != "spot" and kind != "hook") or interactable):
-		draw_string_outline(f, Vector2(-40, -18), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, 3, Color(0, 0, 0, 0.7))
-		draw_string(f, Vector2(-40, -18), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, Color.WHITE)
+		draw_string_outline(f, Vector2(-40, -18 + lift), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, 3, Color(0, 0, 0, 0.7))
+		draw_string(f, Vector2(-40, -18 + lift), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, Color.WHITE)
 	if marked:
-		var y := -32.0 + sin(t * 5.0) * 2.5
+		var y := -32.0 + lift + sin(t * 5.0) * 2.5
 		draw_circle(Vector2(0, y - 4), 7.0, Color("ffcc33"))
 		draw_string(f, Vector2(-10, y), "!", HORIZONTAL_ALIGNMENT_CENTER, 20, 11, Color("402000"))

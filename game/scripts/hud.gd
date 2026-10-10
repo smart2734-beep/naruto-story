@@ -23,6 +23,9 @@ const C_GOLD := Color("d2ad62")
 const C_GOLD_LIGHT := Color("f2d28b")
 const C_GYEOL := Color("5fc5c9")
 const C_DANGER := Color("d9514b")
+## 플레이어 초상화 원본(1254×1254). 대화·선택 UI에서만 쓰고 LINEAR로 축소한다 (assets/README.md 8항).
+const PORTRAIT := preload("res://assets/portraits/apprentice-master.png")
+const PORTRAIT_SIZE := 220.0
 
 var player  # player.gd
 var objective_title := ""
@@ -76,6 +79,7 @@ func _ready() -> void:
 	_canvas = Control.new()
 	_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_canvas.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_canvas.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR  # UI 전용 캔버스. 월드 픽셀은 NEAREST 유지
 	add_child(_canvas)
 	_canvas.draw.connect(_on_draw)
 
@@ -754,6 +758,10 @@ func _draw_craft(s: Vector2) -> void:
 func _draw_choice(s: Vector2) -> void:
 	_canvas.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.5))
 	var r0 := _choice_rect(0)
+	# 선택하는 사람(플레이어)의 초상화. 종횡비 유지.
+	var pr := Rect2(s.x * 0.5 - PORTRAIT_SIZE * 0.5, r0.position.y - 64 - PORTRAIT_SIZE, PORTRAIT_SIZE, PORTRAIT_SIZE)
+	if pr.position.y > TOP_H:
+		_canvas.draw_texture_rect(PORTRAIT, pr, false)
 	_text(Vector2(40, r0.position.y - 24), choice_title, 28, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_CENTER, s.x - 80)
 	for i in choice_options.size():
 		var r := _choice_rect(i)
