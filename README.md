@@ -5,6 +5,14 @@
 - 기획서: [docs/game-design-v0.1.md](docs/game-design-v0.1.md)
 - 게임 프로젝트: [game/](game/) — Godot 4.7, 세로 화면(720×1280), GL Compatibility 렌더러
 
+## 공동 작업
+
+- 작업 기준: [CLAUDE.md](CLAUDE.md)
+- 구현 검토·우선순위·검증 증거: [docs/project-status.md](docs/project-status.md)
+- 마법 교육원 분위기의 아트·UI 명세: [docs/art-direction-v0.1.md](docs/art-direction-v0.1.md)
+
+Codex는 총괄·디자인, Claude는 Godot 구현을 담당한다. 최신 사용자 요청의 아트 방향은 위 디자인 명세를 따른다. 2026-10-10 클라우드에서는 Godot **4.6.3**으로 Q1 자동 점검 22개를 통과했다. 아래 4.7 표기와 실제 개발 엔진 버전의 차이는 협업 현황에 기록했으며, 공통 버전은 실제 실행 파일을 확인해 정한다.
+
 ## 실행
 
 Godot 4.7에서 **프로젝트 가져오기 → `game/project.godot`** 선택 후 실행(F5).
