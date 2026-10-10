@@ -1,0 +1,7 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+HANDLE_IN_RANGE=true
+HANDLE_READING_START hp=100.0 dialogue=true locked=true dodge_allowed=false
+HANDLE_READING_AFTER hp=100.0 dialogue=true locked=true
+HANDLE_LOW_HP_READING deaths=0 dialogue=true dead=false
+REVIEW RESULT: PASS

@@ -1,0 +1,5 @@
+Godot Engine v4.6.3.stable.official.7d41c59c4 - https://godotengine.org
+
+BEETLE_BASELINE hp=82.0 min_distance=1.47752869129181 charge_frames=32 player_layer=4 enemy_mask=3
+BEETLE_CONTROL hp=82.0 min_distance=1.47752869129181 charge_frames=32 player_layer=4 enemy_mask=3
+REVIEW RESULT: PASS

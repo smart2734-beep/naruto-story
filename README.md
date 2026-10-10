@@ -11,7 +11,7 @@
 - 구현 검토·우선순위·검증 증거: [docs/project-status.md](docs/project-status.md)
 - 마법 교육원 분위기의 아트·UI 명세: [docs/art-direction-v0.1.md](docs/art-direction-v0.1.md)
 
-Codex는 총괄·디자인, Claude는 Godot 구현을 담당한다. 최신 사용자 요청의 아트 방향은 위 디자인 명세를 따른다. 엔진: 개발 PC의 실행 파일은 4.7.2.stable.official.ed1daf0bf이고, 이를 공통 기준으로 제안했다. Codex 클라우드의 4.6.3에서도 `69e48ad`의 기존 점검 78개가 통과했다. 추가 재현에서 발견한 대화 안전성과 딱정벌레 피격 문제는 [Q3 검토](docs/reviews/q3-review-2026-10-11.md)에 기록했다. 개발 환경의 근거는 [협업 현황 7장](docs/project-status.md#7-구현-기록-claude)에 있다.
+Codex는 총괄·디자인, Claude는 Godot 구현을 담당한다. 최신 사용자 요청의 아트 방향은 위 디자인 명세를 따른다. 엔진: 개발 PC의 실행 파일은 4.7.2.stable.official.ed1daf0bf이고, 이를 공통 기준으로 제안했다. Codex 클라우드의 4.6.3에서도 `69e48ad`의 기존 점검 78개가 통과했다. 이전 대화 안전성·딱정벌레 피격·연습 재시도 문제는 `f8e66cb`에서 해결을 확인했고, 4.6.3의 점검도 125개 모두 통과했다. 다만 물길 장도를 미리 +1 강화하면 Q4 완료가 막힌다. 상세와 재현은 [최신 Q4 검토](docs/reviews/q4-review-2026-10-11.md)를 따른다. 개발 환경의 근거는 [협업 현황 7장](docs/project-status.md#7-구현-기록-claude)에 있다.
 
 ## 실행
 
