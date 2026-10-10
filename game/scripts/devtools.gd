@@ -927,3 +927,17 @@ func _test_codex_review() -> void:
 	m.world.fix_gap()
 	p.gear = ""
 	m._enter_stage(keep_stage)
+
+	# Q4 P1 (q4-review): 물길 장도를 미리 +1 해 두었으면 파동 체험 뒤 바로 완료가 인정된다.
+	var keep_weapon: String = GameState.weapon
+	var keep_plus: int = GameState.weapon_plus
+	var ore: int = GameState.count("하천광")
+	GameState.weapon = "물길 장도"
+	GameState.weapon_plus = 1
+	m._enter_stage(Main.Stage.Q4_BLADE)
+	m._on_wave_fired(p.position, Vector2.RIGHT)
+	m.hud.skip_dialogue()
+	_check(m.stage == Main.Stage.Q4_DONE and m.world.hatch_open and GameState.count("하천광") == ore, "미리 +1 강화한 물길 장도는 Q4 강화 목표로 인정 (보상 중복 없음)")
+	GameState.weapon = keep_weapon
+	GameState.weapon_plus = keep_plus
+	m._enter_stage(keep_stage)

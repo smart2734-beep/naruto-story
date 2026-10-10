@@ -63,6 +63,7 @@ const TRANSFORM_COMBAT_CD := 10.0
 const COMBAT_RADIUS := 220.0
 ## 대화·작업대·암전 중에는 적과 위험 판정을 멈춘다. 다시 움직일 때 플레이어에게 잠깐 무적을 준다.
 const RESUME_GRACE := 0.8
+const PREVIEW_CAMERA_SHIFT := 80.0
 
 var world
 var player
@@ -102,6 +103,7 @@ var _pending_spirit := ""  ## 변신을 시작한 영물. 결과와 대기시간
 var _hook_marking := false
 var _paused := false
 var pan_offset := Vector2.ZERO  ## 착지 지점을 보여주는 짧은 카메라 이동
+var preview_offset := Vector2.ZERO  ## 착지 미리보기가 화면 안에 들어오도록 카메라를 밀어 주는 값
 var _transform_in_combat := false
 var _last_player_pos := Vector2.ZERO
 var _once: Dictionary = {}
@@ -433,9 +435,9 @@ func _process(delta: float) -> void:
 
 	if shake > 0.0:
 		shake = maxf(shake - delta, 0.0)
-		camera.offset = CAMERA_LOOK_AHEAD + pan_offset + Vector2(randf_range(-3, 3), randf_range(-3, 3)) * shake * 2.0
+		camera.offset = CAMERA_LOOK_AHEAD + pan_offset + preview_offset + Vector2(randf_range(-3, 3), randf_range(-3, 3)) * shake * 2.0
 	else:
-		camera.offset = CAMERA_LOOK_AHEAD + pan_offset
+		camera.offset = CAMERA_LOOK_AHEAD + pan_offset + preview_offset
 	hud.spirit_status = player.gear_status() if player.gear != "" else _companion_status()
 
 
@@ -465,17 +467,24 @@ func _companion_status() -> String:
 ## Q3 착지 미리보기: 틈 앞에서 지금 회피하면 어디에 닿는지 보여준다 (신발 한 걸음 포함).
 func _update_landing_preview() -> void:
 	world.preview = null
-	if stage != Stage.Q3_TRANSFORM and stage != Stage.Q3_GAP:
-		return
-	var gap: Rect2 = World.PITS["gap"]
-	var p: Vector2 = player.position
-	if p.x < gap.position.x - 110.0 or p.x > gap.position.x or p.y > gap.end.y or player.airborne() or player.falling:
-		return
-	var dir: Vector2 = player.move_input.normalized() if player.move_input.length() > 0.2 else player.facing
-	var land: Vector2 = p + dir * player.dodge_reach()
-	var ok: bool = not world.is_pit(land) and not world.is_unsafe_plank(land) and land.y > 40.0 and land.y < 160.0
-	world.preview = land
-	world.preview_ok = ok
+	var want := Vector2.ZERO
+	if stage == Stage.Q3_TRANSFORM or stage == Stage.Q3_GAP:
+		var gap: Rect2 = World.PITS["gap"]
+		var p: Vector2 = player.position
+		var near := p.x >= gap.position.x - 110.0 and p.x <= World.SAFE_LANDING.end.x and p.y <= gap.end.y
+		if near:
+			# 착지 원과 잎이 화면 안에 들어오도록 카메라를 틈 건너편 쪽으로 민다 (Codex Q4 검토 P2).
+			# 회피 중에도 같은 값을 유지해 화면이 튀지 않게 한다.
+			want = Vector2(PREVIEW_CAMERA_SHIFT, 0.0)
+		if near and p.x <= gap.position.x and not player.airborne() and not player.falling:
+			var dir: Vector2 = player.move_input.normalized() if player.move_input.length() > 0.2 else player.facing
+			var land: Vector2 = p + dir * player.dodge_reach()
+			world.preview = land
+			world.preview_ok = not world.is_pit(land) and not world.is_unsafe_plank(land) and land.y > 40.0 and land.y < 160.0
+	_apply_preview_offset(want)
+
+func _apply_preview_offset(want: Vector2) -> void:
+	preview_offset = preview_offset.lerp(want, clampf(get_process_delta_time() * 6.0, 0.0, 1.0))
 
 
 func _pan_to(target: Vector2) -> void:
@@ -1082,7 +1091,7 @@ func _on_wave_fired(origin: Vector2, dir: Vector2) -> void:
 	if stage == Stage.Q4_BLADE:
 		hud.toast("줄비 파동! 회피 직후 첫 공격")
 		hud.clear_hint()
-		_enter_stage(Stage.Q4_UPGRADE)
+		_enter_q4_upgrade()
 
 
 func _on_trait_triggered() -> void:
@@ -1093,7 +1102,26 @@ func _on_trait_triggered() -> void:
 	add_child(ft)
 
 
+## 강화 단계 진입: 물길 장도를 이미 +1 이상 강화했다면 그 달성을 인정하고 바로 완료한다 (Codex Q4 검토 P1).
+## 저장 기능이 생겨 강화된 장비로 이 단계에 들어오는 경우도 같은 판정을 쓴다.
+func _q4_upgrade_done() -> bool:
+	return GameState.weapon == "물길 장도" and GameState.weapon_plus >= 1
+
+
+func _enter_q4_upgrade() -> void:
+	if _q4_upgrade_done():
+		hud.toast("이미 %s — 강화 목표 달성" % GameState.weapon_label())
+		_complete_q4()
+	else:
+		_enter_stage(Stage.Q4_UPGRADE)
+
+
 func _complete_q4() -> void:
+	if stage == Stage.Q4_DONE:
+		return
+	# 진행 상태는 대사를 기다리지 않고 바로 확정한다.
+	world.hatch_open = true
+	_enter_stage(Stage.Q4_DONE)
 	if GameState.claim_reward("Q4"):
 		var gained := GameState.xp_to_level(5)
 		GameState.add_item("하천광", 3)
@@ -1107,9 +1135,7 @@ func _complete_q4() -> void:
 		["줄비", "(갑자기 물레방아 쪽으로 몸을 늘이더니, 고리에서 이어진 긴 연결선을 따라 바닥 덮개를 두드린다)"],
 		["도겸", "방앗간 아래로 이어진다고? …단우에게 알리자. 거긴 정비기가 있는 곳이야."],
 	], func():
-		world.hatch_open = true
-		hud.show_hint("초상화를 길게 누르면 도톰과 줄비를 바꿔 데려갈 수 있어요", 5.0)
-		_enter_stage(Stage.Q4_DONE))
+		hud.show_hint("초상화를 길게 누르면 도톰과 줄비를 바꿔 데려갈 수 있어요", 5.0))
 
 
 # ── 전투·사고 ─────────────────────────────────────────────
