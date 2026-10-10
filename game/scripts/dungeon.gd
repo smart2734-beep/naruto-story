@@ -79,6 +79,15 @@ func turn_handle(right: bool) -> bool:
 	return drained
 
 
+## 저장 불러오기: 손잡이 방향과 배수 상태를 그대로 되살린다.
+func restore(l: int, r: int, is_drained: bool) -> void:
+	handle_l = l
+	handle_r = r
+	drained = is_drained
+	drain_k = 0.0 if is_drained else 1.0
+	_pool_body.get_child(0).set_deferred("disabled", is_drained)
+
+
 func room_of(p: Vector2) -> int:
 	if p.y > WALL_12:
 		return 1

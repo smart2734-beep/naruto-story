@@ -20,6 +20,8 @@ const FxWave := preload("res://scripts/fx_wave.gd")
 const Dungeon := preload("res://scripts/dungeon.gd")
 const Boss := preload("res://scripts/enemy_boss_claw.gd")
 const Worker := preload("res://scripts/npc_worker.gd")
+const SaveSystem := preload("res://scripts/save_system.gd")
+const Snapshot := preload("res://scripts/save_snapshot.gd")
 const Interactable := preload("res://scripts/interactable.gd")
 const Hud := preload("res://scripts/hud.gd")
 const FloatText := preload("res://scripts/float_text.gd")
@@ -105,6 +107,10 @@ var handle_r_spot
 var sluice_spot
 var core_spot
 var in_dungeon := false
+var save_system
+var _loading := false
+var _last_checkpoint := Vector2.INF
+var _checkpoint_poll := 0.0
 var _drain_time := 0.0
 
 var stage: Stage = Stage.TALK_DANU
@@ -270,11 +276,35 @@ func _ready() -> void:
 	hud.show_hint("왼쪽 아래를 누른 채 끌어서 이동하세요")
 
 	var args := OS.get_cmdline_user_args()
-	if args.has("--autotest") or _arg_value(args, "--shot=", "") != "":
+	save_system = SaveSystem.new()
+	add_child(save_system)
+	save_system.saved.connect(func(ok: bool): hud.save_notice(ok))
+	var dev_mode: bool = args.has("--autotest") or _arg_value(args, "--shot=", "") != ""
+	var save_path := _arg_value(args, "--save-path=", "")
+	if save_path != "":
+		# 저장 재접속 점검: 지정한 파일만 쓰고, verify 단계에서는 묻지 않고 바로 불러온다.
+		save_system.path = save_path
+		dev_mode = true
+		if _arg_value(args, "--save-phase=", "") == "verify":
+			var d: Dictionary = save_system.load_latest()
+			if not d.is_empty():
+				load_snapshot(d)
+		else:
+			for f in [save_system.path, save_system.tmp_path(), save_system.bak_path()]:
+				if FileAccess.file_exists(f):
+					DirAccess.remove_absolute(ProjectSettings.globalize_path(f))
+	elif args.has("--with-save"):
+		_offer_continue()  # 캡처용: 시작 화면의 이어하기 선택지를 그대로 보여준다
+		save_system.enabled = false  # 보여주기만 하고 쓰지 않는다
+	elif dev_mode or get_parent() != get_tree().root:
+		# 자동 점검·캡처, 그리고 다른 장면에 넣어 실행하는 검토 도구(docs/reviews/*-probe)는 실제 저장 파일을 건드리지 않는다
+		save_system.enabled = false
+	else:
+		_offer_continue()
+	if dev_mode:
 		var dev = DevTools.new()
 		add_child(dev)
 		dev.start(self, args)
-
 
 func _arg_value(args: PackedStringArray, prefix: String, fallback: String) -> String:
 	for a in args:
@@ -341,6 +371,11 @@ func _first(id: String) -> bool:
 # ── 진행 단계 ─────────────────────────────────────────────
 
 func _enter_stage(s: Stage) -> void:
+	_enter_stage_inner(s)
+	request_save("stage")
+
+
+func _enter_stage_inner(s: Stage) -> void:
 	stage = s
 	for n in [danu, crate, haon, maedeup, anchor_spot, handle_spot, dogyeom, bench_village, bench_mill, ring_spot,
 			hatch_spot, plaque_spot, handle_l_spot, handle_r_spot, sluice_spot, core_spot, worker]:
@@ -484,6 +519,7 @@ func _update_rope_objective() -> void:
 
 func _process(delta: float) -> void:
 	player.locked = hud.dialogue_active()
+	_poll_checkpoint(delta)
 	moved_distance += player.position.distance_to(_last_player_pos)
 	_last_player_pos = player.position
 	for k in _switch_cd:
@@ -951,6 +987,7 @@ func _on_transform_done() -> void:
 		player.gear = ""
 		node.become_companion()
 	_refresh_spirit_hud()
+	request_save("transform")
 
 
 ## 초상화 길게 누르기: 활성 영물 교체. 쉬는 영물은 숙소로 가고 전투 보너스가 없다. 전투 중에는 불가.
@@ -980,6 +1017,7 @@ func set_active_spirit(id: String) -> void:
 	spirit_nodes[id].become_companion()
 	_refresh_spirit_hud()
 	hud.toast("%s와 함께 · %s는 숙소에서 쉼" % [id, old])
+	request_save("swap")
 	if stage == Stage.Q4_SWAP and id == "줄비":
 		hud.clear_hint()
 		_enter_stage(Stage.Q4_UNHOOK)
@@ -1014,13 +1052,14 @@ func _turn_handle() -> void:
 	tw.tween_property(world, "backflow", 0.0, 1.5)
 	world.fix_gap()
 	shake = 0.6
+	# 보상과 완료 단계를 대사보다 먼저 확정하고 저장한다 (대사 도중 종료해도 보상이 남게).
+	_enter_stage(Stage.Q3_DONE)
 	hud.start_dialogue([
 		["하온", "(멀리서) 물소리가 돌아왔어! 네가 한 걸음 더 간 덕에, 아래 마을이 숨을 쉬겠구나."],
 		["조사", "압력이 빠지자 손잡이 축에 낯선 쇠고리가 드러났다. 정상 부품 위에 누군가 덧씌운 고리다."],
 		["하온", "이건 우리 수문 부품이 아니야… 도겸에게 보여 보게. 마을 작업장의 장인일세."],
 	], func():
-		hud.show_hint("되받기: 맞기 직전에 누르면 막고 반격해요 (결력 12)", 5.0)
-		_enter_stage(Stage.Q3_DONE))
+		hud.show_hint("되받기: 맞기 직전에 누르면 막고 반격해요 (결력 12)", 5.0))
 
 
 # ── Q4 ───────────────────────────────────────────────────
@@ -1112,6 +1151,7 @@ func _on_craft(id: String) -> void:
 		var w := id.substr(6)
 		if not GameState.craft_weapon(w):
 			return
+		request_save("craft")
 		hud.toast("%s 제작 완료!" % w)
 		if stage == Stage.Q4_CRAFT:
 			hud.close_craft()
@@ -1123,6 +1163,7 @@ func _on_craft(id: String) -> void:
 	elif id == "upgrade":
 		if not GameState.upgrade_weapon():
 			return
+		request_save("upgrade")
 		hud.toast("%s 강화 성공!" % GameState.weapon_label())
 		if stage == Stage.Q4_UPGRADE and GameState.weapon == "물길 장도" and GameState.weapon_plus >= 1:
 			hud.close_craft()
@@ -1438,6 +1479,7 @@ func _complete_q5(choice: int) -> void:
 		GameState.add_currency(60)
 		GameState.add_item("조율 부품")
 		GameState.add_item("혈계·도구 수련권")
+		request_save("q5_choice")  # 보상·선택을 같은 스냅샷에 확정 (마을 귀환 연출 전)
 		hud.toast(Q5_TITLE + " 완료")
 		hud.toast("Lv.%d · 재화 +60" % GameState.level + (" · 레벨 업!" if gained > 0 else ""))
 		hud.toast("확정 조율 부품 · 혈계·도구 수련권")
@@ -1570,3 +1612,84 @@ func _on_player_fell() -> void:
 	var node = active_node()
 	if node != null and node.visible:
 		node.position = at + Vector2(14, 6)
+
+
+# ── 저장 ─────────────────────────────────────────────────
+
+## 자동 저장. 쓰러지거나 빠지는 중·불러오는 중에는 하지 않는다 (재개 위치는 항상 안전한 체크포인트).
+func request_save(_reason: String = "") -> void:
+	if save_system == null or not save_system.enabled or _loading:
+		return
+	if player.dead or player.falling:
+		return
+	save_system.save(Snapshot.build(self))
+
+
+## 안전 체크포인트가 바뀌면(다른 구역에 들어서면) 저장한다.
+func _poll_checkpoint(delta: float) -> void:
+	_checkpoint_poll -= delta
+	if _checkpoint_poll > 0.0:
+		return
+	_checkpoint_poll = 0.5
+	if hud.busy() or player.dead or player.falling or player.airborne():
+		return
+	var cp: Vector2 = Snapshot.resume_point(self)
+	if cp != _last_checkpoint:
+		var first := _last_checkpoint == Vector2.INF
+		_last_checkpoint = cp
+		if not first:
+			request_save("checkpoint")
+
+
+## 휴대폰에서 앱이 백그라운드로 가거나 창을 닫을 때도 저장한다 (종료 이벤트 하나에 의존하지 않는다).
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		request_save("pause")
+
+
+func load_snapshot(d: Dictionary) -> void:
+	_loading = true
+	Snapshot.apply(self, d)
+	_loading = false
+	_last_checkpoint = Snapshot.resume_point(self)
+	# 이미 +1인 장도로 강화 단계에 들어온 경우 완료를 인정한다 (Q4 검토 P1과 같은 판정)
+	if stage == Stage.Q4_UPGRADE and _q4_upgrade_done():
+		_complete_q4()
+	request_save("loaded")
+
+
+## 시작 화면: 실제 저장이 있고 정상으로 읽힐 때만 ‘이어하기’를 보여준다.
+func _offer_continue() -> void:
+	if not save_system.has_any_file():
+		return
+	var d: Dictionary = save_system.load_latest()
+	if d.is_empty():
+		var start_over := func(_i: int):
+			var moved: Array = save_system.quarantine("corrupt")
+			hud.toast("손상된 저장 %d개를 보관했어요" % moved.size())
+		hud.start_choice("저장을 읽을 수 없어요", [["새로 시작", "읽지 못한 저장은 지우지 않고 따로 보관해요"]], start_over, "이유: " + save_system.last_error)
+		return
+	var note := "" if save_system.loaded_from == "main" else "현재 저장이 손상되어 직전 정상 저장으로 이어요"
+	var pick := func(i: int):
+		if i == 0:
+			load_snapshot(d)
+			hud.toast("이어하기")
+		else:
+			save_system.quarantine("old")
+			hud.toast("새로 시작")
+	hud.start_choice("이어서 할까요?", [
+		["이어하기", _save_summary(d)],
+		["새로 시작", "지금 저장은 지우지 않고 따로 보관한 뒤 처음부터"],
+	], pick, note)
+
+func _save_summary(d: Dictionary) -> String:
+	var g: Dictionary = d["game"]
+	var when := Time.get_datetime_string_from_unix_time(int(d.get("saved_at", 0)) + _tz_offset(), true)
+	var tag := String(d["stage"]).split("_")[0]
+	if not tag.begins_with("Q"):
+		tag = "Q1"
+	return "%s · Lv.%d · 재화 %d · %s" % [tag, int(g["level"]), int(g["currency"]), when.substr(5, 11).replace("T", " ")]
+
+
+func _tz_offset() -> int:
+	return int(Time.get_time_zone_from_system().get("bias", 0)) * 60

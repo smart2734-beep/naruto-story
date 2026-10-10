@@ -84,6 +84,20 @@ func reset_fight() -> void:
 		dungeon.secured = false
 
 
+## 저장 불러오기: 이미 멈춘 정비기.
+func restore_stopped() -> void:
+	if not alive:
+		return
+	alive = false
+	hp = 0.0
+	state = State.STOPPED
+	position = home
+	remove_from_group("enemy")
+	if dungeon:
+		dungeon.flood = 0.0
+		dungeon.boss_stopped = true
+
+
 func reset_to_home() -> void:
 	pass  # 일반 적 재배치에서는 건드리지 않는다. 보스 재도전은 reset_fight().
 

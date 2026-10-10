@@ -162,14 +162,18 @@ func _add_circle(p: Vector2, radius: float) -> void:
 
 # ── 퀘스트용 API ──────────────────────────────────────────
 
+## 충돌 반영은 다음 물리 프레임(set_deferred)이지만, 상태는 바로 기록한다 (곧바로 저장해도 정확하게).
+var _blocker_on: Dictionary = {}
+
+
 func set_blocker(id: String, enabled: bool) -> void:
 	var body: StaticBody2D = _removable_bodies[id]
 	body.get_child(0).set_deferred("disabled", not enabled)
+	_blocker_on[id] = enabled
 
 
 func blocker_enabled(id: String) -> bool:
-	var body: StaticBody2D = _removable_bodies[id]
-	return not body.get_child(0).disabled
+	return bool(_blocker_on.get(id, true))
 
 
 func set_pit(id: String, enabled: bool) -> void:

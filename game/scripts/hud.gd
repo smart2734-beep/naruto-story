@@ -59,6 +59,8 @@ var craft_title := ""
 var craft_rows: Array = []  ## [{id, title, desc, cost: [[이름, 보유, 필요]], button, can}]
 
 var fade := 0.0
+var save_flash := 0.0  ## > 0: 저장 결과 표시 중
+var save_ok := true
 var fade_text := ""
 
 var joy_index := -1
@@ -72,6 +74,10 @@ var _portrait_held := 0.0
 var _portrait_long_sent := false
 
 var _canvas: Control
+## 휴대폰 안전 영역(노치·하단 제스처). 위 정보는 inset_top만큼 내리고, 아래 조작은 inset_bottom만큼 올린다.
+var inset_top := 0.0
+var inset_bottom := 0.0
+var mobile := OS.has_feature("mobile")
 
 
 func _ready() -> void:
@@ -93,12 +99,20 @@ func set_objective(title: String, text: String, target = null) -> void:
 
 
 func show_hint(text: String, duration: float = -1.0) -> void:
-	hint_text = text
+	hint_text = platform_text(text, mobile)
 	hint_time = duration
 
 
+## 휴대폰에서는 PC 키 안내 "(PC: …)"를 보이지 않는다 (저장·Android 기준 4장).
+static func platform_text(text: String, on_mobile: bool) -> String:
+	if not on_mobile:
+		return text
+	var re := RegEx.create_from_string("\\s*\\(PC:[^)]*\\)")
+	return re.sub(text, "", true)
+
+
 func clear_hint(text: String = "") -> void:
-	if text == "" or hint_text == text:
+	if text == "" or hint_text == platform_text(text, mobile):
 		hint_text = ""
 
 
@@ -178,6 +192,27 @@ func _choice_rect(i: int) -> Rect2:
 	return Rect2(40, top + 70 + i * 140, s.x - 80, 120)
 
 
+## 실제로 파일 쓰기에 성공했을 때만 "저장됨"을 보인다 (실패는 붉게).
+func save_notice(ok: bool) -> void:
+	save_ok = ok
+	save_flash = 1.4 if ok else 3.0
+
+
+## 불러오기 직전: 열려 있는 대화·선택·작업대·안내를 모두 닫는다.
+func hud_reset() -> void:
+	dialogue = []
+	dialogue_index = 0
+	dialogue_done = Callable()
+	choice_options = []
+	choice_cb = Callable()
+	craft_rows = []
+	end_lines = []
+	toasts.clear()
+	hint_text = ""
+	fade = 0.0
+	info_open = false
+
+
 func show_fade(text: String) -> void:
 	fade = 1.0
 	fade_text = text
@@ -201,25 +236,42 @@ func _quest_rect() -> Rect2:
 	return Rect2(12, 104, _size().x - 24, 52)
 
 
+## 조작 버튼 배치의 기준 바닥 (하단 제스처 영역 위)
+func _ctrl_bottom() -> float:
+	return _size().y - inset_bottom
+
+
+func _update_safe_area() -> void:
+	if not mobile:
+		return
+	var screen := DisplayServer.screen_get_size()
+	var safe := DisplayServer.get_display_safe_area()
+	if screen.y <= 0 or safe.size.y <= 0:
+		return
+	var k := _size().y / float(screen.y)
+	inset_top = maxf(float(safe.position.y), 0.0) * k
+	inset_bottom = maxf(float(screen.y - safe.end.y), 0.0) * k
+
+
 func _dodge_c() -> Vector2:
-	return Vector2(_size().x - 118, _size().y - 170)
+	return Vector2(_size().x - 118, _ctrl_bottom() - 170)
 
 
 func _skill_c() -> Vector2:
-	return Vector2(_size().x - 268, _size().y - 112)
+	return Vector2(_size().x - 268, _ctrl_bottom() - 112)
 
 
 func _guard_c() -> Vector2:
-	return Vector2(_size().x - 252, _size().y - 270)
+	return Vector2(_size().x - 252, _ctrl_bottom() - 270)
 
 
 func _interact_c() -> Vector2:
-	return Vector2(_size().x - 130, _size().y - 352)
+	return Vector2(_size().x - 130, _ctrl_bottom() - 352)
 
 
 ## 명세 6장의 영물 칸 가설: 720×1280 기준 (296, 1020)
 func _portrait_c() -> Vector2:
-	return Vector2(296, _size().y - 260)
+	return Vector2(296, _ctrl_bottom() - 260)
 
 
 func _skill_visible() -> bool:
@@ -299,7 +351,7 @@ func _touch_down(e: InputEventScreenTouch) -> void:
 	if info_open:
 		info_open = false
 		return
-	if _quest_rect().has_point(e.position) and objective_title != "":
+	if _quest_rect().has_point(e.position - Vector2(0, inset_top)) and objective_title != "":
 		info_open = true
 		info_time = 6.0
 	elif e.position.distance_to(_dodge_c()) < 82.0:
@@ -416,6 +468,7 @@ func _advance_dialogue() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_safe_area()
 	if player:
 		if forced_move != null:
 			player.move_input = forced_move
@@ -427,6 +480,7 @@ func _process(delta: float) -> void:
 			player.move_input = _keyboard_vector()
 	if dialogue_active():
 		dialogue_chars += TYPE_SPEED * delta
+	save_flash = maxf(save_flash - delta, 0.0)
 	if hint_time > 0.0:
 		hint_time -= delta
 		if hint_time <= 0.0:
@@ -488,6 +542,7 @@ func _on_draw() -> void:
 		_draw_dialogue(s)
 	elif not craft_open() and not choice_active() and end_lines.is_empty():
 		_draw_controls(s)
+	_canvas.draw_set_transform(Vector2(0, inset_top))
 	if player:
 		_draw_status(s)
 	_draw_objective(s)
@@ -495,6 +550,7 @@ func _on_draw() -> void:
 	_draw_toasts(s)
 	if info_open:
 		_draw_info(s)
+	_canvas.draw_set_transform(Vector2.ZERO)
 	if craft_open():
 		_draw_craft(s)
 	if choice_active():
@@ -521,7 +577,12 @@ func _draw_status(s: Vector2) -> void:
 	var bw := s.x - x0 - 150.0
 	_bar(Rect2(x0, 22, bw, 28), player.hp / player.max_hp, C_DANGER, "체력 %d" % roundi(player.hp))
 	_bar(Rect2(x0, 58, bw, 28), player.gyeol / player.max_gyeol, Color(C_GYEOL, 0.85), "결력 %d" % roundi(player.gyeol))
-	_text(Vector2(s.x - 144, 46), "재화", 18, Color(C_TEXT, 0.7), HORIZONTAL_ALIGNMENT_RIGHT, 120)
+	if save_flash > 0.0:
+		# 저장 결과는 잠깐 "재화" 이름표 자리에 보인다 (막대를 가리지 않게)
+		var sa := clampf(save_flash / 0.4, 0.0, 1.0)
+		_text(Vector2(s.x - 144, 46), "저장됨" if save_ok else "저장 실패", 17, Color(0.6, 0.9, 0.65, sa) if save_ok else Color(1.0, 0.5, 0.45, sa), HORIZONTAL_ALIGNMENT_RIGHT, 120)
+	else:
+		_text(Vector2(s.x - 144, 46), "재화", 18, Color(C_TEXT, 0.7), HORIZONTAL_ALIGNMENT_RIGHT, 120)
 	_text(Vector2(s.x - 144, 80), str(GameState.currency), 26, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_RIGHT, 120)
 
 
@@ -607,7 +668,7 @@ func _round_button(c: Vector2, r: float, label: String, col: Color, id: String, 
 func _draw_controls(s: Vector2) -> void:
 	if player == null or fade > 0.0:
 		return
-	var base := joy_origin if joy_index != -1 else Vector2(150, s.y - 190)
+	var base := joy_origin if joy_index != -1 else Vector2(150, _ctrl_bottom() - 190)
 	var knob := base + joy_vec * JOY_R
 	_canvas.draw_circle(base, JOY_R, Color(1, 1, 1, 0.12 if joy_index == -1 else 0.2))
 	_canvas.draw_arc(base, JOY_R, 0, TAU, 48, Color(1, 1, 1, 0.35), 3.0)
@@ -689,7 +750,7 @@ func _draw_dialogue(s: Vector2) -> void:
 	var text_w := s.x - 96
 	var th := GameState.ui_font.get_multiline_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, text_w, 28).y
 	var h := clampf(th + 104.0, 160.0, 360.0)
-	var rect := Rect2(16, s.y - 96 - h, s.x - 32, h)
+	var rect := Rect2(16, _ctrl_bottom() - 96 - h, s.x - 32, h)
 	_panel(rect, Color(C_PANEL_DEEP, 0.94), Color("7fd6c2"))
 	_panel(Rect2(rect.position + Vector2(24, -26), Vector2(180, 52)), Color("2d3e5c"), Color("7fd6c2"), 12)
 	_text(rect.position + Vector2(24, 10), String(line[0]), 26, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_CENTER, 180)

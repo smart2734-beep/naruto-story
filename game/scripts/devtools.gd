@@ -21,7 +21,10 @@ var fails: Array[String] = []
 
 func start(main_node, args: PackedStringArray) -> void:
 	m = main_node
-	if args.has("--autotest"):
+	var save_scn: String = m._arg_value(args, "--save-scenario=", "")
+	if save_scn != "":
+		_save_test(save_scn, m._arg_value(args, "--save-phase=", "write"))
+	elif args.has("--autotest"):
 		_autotest()
 	else:
 		_screenshot(m._arg_value(args, "--shot=", ""), m._arg_value(args, "--scenario=", "start"))
@@ -411,7 +414,7 @@ func _screenshot(path: String, scenario: String) -> void:
 	await _wait(0.4)
 	if scenario.begins_with("q5"):
 		await _setup_q5(scenario)
-	elif not scenario in ["start", "dialogue", "aim", "reward", "info"]:
+	elif not scenario in ["start", "dialogue", "aim", "reward", "info", "title"]:
 		await _fast_forward_to_q2()
 	match scenario:
 		"dialogue":
@@ -865,7 +868,13 @@ func _test_hud() -> void:
 	var short_h := font.get_multiline_string_size("응.", HORIZONTAL_ALIGNMENT_LEFT, w, 28).y
 	var long_h := font.get_multiline_string_size("아주 긴 대사가 여러 줄로 이어질 때는 창이 그만큼 높아져야 하고, 짧은 대사는 작은 창으로 보여서 몸과 목적지를 덜 가린다.", HORIZONTAL_ALIGNMENT_LEFT, w, 28).y
 	_check(long_h > short_h * 1.8, "긴 대사는 여러 줄 (짧은 %.0f / 긴 %.0f)" % [short_h, long_h])
-
+	# 휴대폰: 하단 제스처 영역만큼 조작을 올리고, PC 키 안내는 숨긴다
+	var dodge_before: Vector2 = h._dodge_c()
+	var portrait_before: Vector2 = h._portrait_c()
+	h.inset_bottom = 40.0
+	_check(h._dodge_c().y == dodge_before.y - 40.0 and h._portrait_c().y == portrait_before.y - 40.0, "하단 안전 영역만큼 조작 버튼을 올림")
+	h.inset_bottom = 0.0
+	_check(h.platform_text("영물을 바꿔요 (PC: T)", true) == "영물을 바꿔요" and h.platform_text("영물을 바꿔요 (PC: T)", false) == "영물을 바꿔요 (PC: T)", "휴대폰 안내에는 PC 키 표시 없음")
 func _to_q4() -> void:
 	await _to_q3()
 	_teleport(Main.GAP_START)
@@ -1175,6 +1184,10 @@ func _setup_q5(scenario: String) -> void:
 		m.hud.skip_dialogue()
 	m.hud.toasts.clear()
 	await _wait(1.6)
+	if scenario == "q5_drained":
+		_teleport(Vector2(1440, 1046))
+		await _settle()
+		return
 	_teleport(m.worker.position + Vector2(0, 26))
 	await _interact(m.worker)
 	if scenario == "q5_escort":
@@ -1245,3 +1258,249 @@ func _test_art() -> void:
 	p.hp = p.max_hp
 	await _wait(0.8)
 	_check(m.hud._canvas.texture_filter == CanvasItem.TEXTURE_FILTER_LINEAR and m.hud.PORTRAIT.get_width() == 1254, "초상화 원본(1254) 그대로, UI에서 LINEAR")
+
+
+# ── 저장 재접속 점검 (tools/save-roundtrip.ps1) ─────────────────
+# write 단계: 새 게임에서 그 지점까지 진행하고 (자동 저장된 상태 그대로) 종료한다.
+# verify 단계: 새 프로세스가 같은 파일을 불러온 뒤 상태를 검사한다. 메모리 재설정이 아니라 실제 파일·재시작이다.
+
+func _expect_path() -> String:
+	return m.save_system.path.get_basename() + ".expect.json"
+
+
+func _write_expect(d: Dictionary) -> void:
+	var f := FileAccess.open(_expect_path(), FileAccess.WRITE)
+	f.store_string(JSON.stringify(d))
+	f.close()
+
+
+func _read_expect() -> Dictionary:
+	if not FileAccess.file_exists(_expect_path()):
+		return {}
+	var f := FileAccess.open(_expect_path(), FileAccess.READ)
+	var d = JSON.parse_string(f.get_as_text())
+	f.close()
+	return d if typeof(d) == TYPE_DICTIONARY else {}
+
+
+func _save_test(scn: String, phase: String) -> void:
+	await _wait(0.3)
+	print("=== SAVE %s / %s ===" % [scn, phase])
+	if phase == "write":
+		await _save_write(scn)
+		print("SAVE WRITE DONE stage=%s seq=%d err=%s" % [Main.Stage.keys()[m.stage], m.save_system.seq, m.save_system.last_error])
+		get_tree().quit(0 if m.save_system.last_error == "" or scn.begins_with("corrupt") or scn == "interrupted" else 2)
+		return
+	await _settle()
+	await _save_verify(scn)
+	print("=== RESULT: %s (%d fail) ===" % ["PASS" if fails.is_empty() else "FAIL", fails.size()])
+	get_tree().quit(0 if fails.is_empty() else 1)
+
+
+func _to_contract_done() -> void:
+	await _to_calm()
+	_teleport(m.dotom.position + Vector2(-100, 0))
+	await _wait_until(func(): return m.hud.dialogue_active(), 5.0)
+	m.hud.skip_dialogue()
+	await _wait_until(func():
+		if m.dotom.state == Dotom.State.LEAD:
+			_teleport(m.dotom.position + Vector2(40, 0))
+		return m.stage == Main.Stage.Q2_CONTRACT, 25.0)
+	m.hud.skip_dialogue()
+
+
+func _save_write(scn: String) -> void:
+	var p = m.player
+	match scn:
+		"q1_crate":
+			_teleport(m.danu.position + Vector2(0, 24))
+			await _interact(m.danu)
+			_teleport(m.crate.position + Vector2(-24, 0))
+			await _interact(m.crate)
+		"q1_reward":
+			m._enter_stage(Main.Stage.CROSS)
+			p.carrying = true
+			_teleport(m.haon.position + Vector2(0, 30))
+			m._deliver_q1()  # 보상 지급 직후, 역류 연출 도중에 종료
+		"q2_calm":
+			await _fast_forward_to_q2()
+			await _to_calm()
+		"q2_follow":
+			await _fast_forward_to_q2()
+			await _to_calm()
+			_teleport(m.dotom.position + Vector2(-100, 0))
+			await _wait_until(func(): return m.hud.dialogue_active(), 5.0)
+			m.hud.skip_dialogue()
+			await _wait(1.0)  # 도톰이 둥지를 지고 가는 도중에 종료
+		"q2_contract":
+			await _fast_forward_to_q2()
+			await _to_contract_done()
+		"q3_gap":
+			await _fast_forward_to_q2()
+			await _to_q3()
+			_teleport(Main.GAP_START)
+			m.dotom.position = Main.GAP_START + Vector2(-20, 10)
+			await _wait_until(func(): return m.stage == Main.Stage.Q3_TRANSFORM, 4.0)
+			m._on_portrait()
+			await _settle()
+		"q3_done":
+			await _fast_forward_to_q2()
+			await _to_q3()
+			_teleport(Main.GAP_START)
+			m.dotom.position = Main.GAP_START + Vector2(-20, 10)
+			await _wait_until(func(): return m.stage == Main.Stage.Q3_TRANSFORM, 4.0)
+			m._on_portrait()
+			_teleport(Vector2(850, 90))
+			await _settle()
+			_teleport(World.HANDLE_POS + Vector2(-20, 20))
+			await _settle()
+			m._on_interact(m.handle_spot)  # 보상 대사 도중 종료
+		"q4_craft", "q4_early", "q4_contract":
+			await _fast_forward_to_q2()
+			await _to_q4()
+			await _wait_until(func(): return p.transform_t <= 0.0, 3.0)
+			_teleport(m.bench_village.position + Vector2(0, 26))
+			await _settle()
+			m._on_interact(m.bench_village)
+			m._on_craft("craft:물길 장도")  # 제작 직후, 도겸 대사 도중
+			if scn == "q4_craft":
+				_write_expect({"currency": GameState.currency, "ore": GameState.count("하천광"), "fiber": GameState.count("수초섬유")})
+				return
+			m.hud.skip_dialogue()
+			if scn == "q4_early":
+				m._on_interact(m.bench_village)
+				m._on_craft("upgrade")
+				m.hud.close_craft()
+				_write_expect({"currency": GameState.currency, "ore": GameState.count("하천광")})
+				return
+			_teleport(Main.RING_POS + Vector2(0, -24))
+			await _interact(m.ring_spot)
+			m._on_portrait_long()
+			_teleport(Main.RING_POS + Vector2(0, -30))
+			for i in 2:
+				await _wait_until(func(): return m.hooks[i].interactable, 4.0)
+				_teleport(m.hooks[i].position + Vector2(0, -22))
+				await _interact(m.hooks[i])
+				_teleport(Main.RING_POS + Vector2(0, -30))
+			_teleport(Main.RING_POS + Vector2(0, -24))
+			await _interact(m.ring_spot)
+		"q5_drain":
+			await _setup_q5("q5_drained")
+		"q5_boss", "q5_choice":
+			await _setup_q5("q5_save")
+			var b = m.boss
+			b.hp = 100.0
+			m.worker.hp = 30.0
+			m.request_save("mid-fight")
+			if scn == "q5_boss":
+				return
+			b.take_hit(9999.0, Vector2.ZERO)
+			await _settle()
+			m.hud.skip_dialogue()
+			_teleport(m.core_spot.position + Vector2(0, 20))
+			await _interact(m.core_spot)
+			var cur: int = GameState.currency
+			m.hud.pick_choice(1)  # 선택 직후, 마을 귀환 연출 도중 종료
+			_write_expect({"currency": cur + 60})
+		"corrupt_main", "interrupted":
+			m._enter_stage(Main.Stage.GET_CRATE)
+			m._enter_stage(Main.Stage.GO_ENTRANCE)  # 두 번 저장 → .bak = GET_CRATE, 현재 = GO_ENTRANCE
+			var sv = m.save_system
+			if scn == "corrupt_main":
+				var f := FileAccess.open(sv.path, FileAccess.WRITE)
+				f.store_string("{\"schema_version\": 1, \"stage\": ")  # 쓰다 끊긴 JSON
+				f.close()
+				sv.enabled = false  # 종료 전에 다시 쓰지 않게
+			else:
+				# 교체 도중 중단: 현재 → 백업으로 옮긴 뒤 임시 → 현재로 바꾸기 전에 꺼짐
+				DirAccess.copy_absolute(ProjectSettings.globalize_path(sv.path), ProjectSettings.globalize_path(sv.tmp_path()))
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(sv.bak_path()))
+				DirAccess.rename_absolute(ProjectSettings.globalize_path(sv.path), ProjectSettings.globalize_path(sv.bak_path()))
+				sv.enabled = false
+		"corrupt_all":
+			m._enter_stage(Main.Stage.GET_CRATE)
+			m._enter_stage(Main.Stage.GO_ENTRANCE)
+			for path in [m.save_system.path, m.save_system.bak_path()]:
+				var f := FileAccess.open(path, FileAccess.WRITE)
+				f.store_string("not json")
+				f.close()
+			m.save_system.enabled = false  # 종료 시 다시 쓰지 않게
+
+
+func _save_verify(scn: String) -> void:
+	var p = m.player
+	var S = Main.Stage
+	var ex := _read_expect()
+	var sv = m.save_system
+	match scn:
+		"q1_crate":
+			_check(m.stage == S.GO_ENTRANCE and p.carrying and not m.crate.visible and not m.crate.interactable, "상자 수령 유지 (운반 중, 상자 사라짐)")
+			_check(p.position == Main.VILLAGE_START and not p.dead and p.hp == p.max_hp, "마을 안전 지점에서 재개, 체력 가득")
+		"q1_reward":
+			_check(m.stage == S.TALK_MAEDEUP and m.maedeup.visible and m.world.backflow > 0.9, "역류 연출 도중 종료 → 매듭 대화 단계로 재개")
+			_check(GameState.currency == 20 and GameState.has_skill("사선베기") and GameState.weapon == "기본 장도" and GameState.claimed_rewards.has("Q1"), "Q1 보상 유지")
+			_teleport(m.haon.position + Vector2(0, 30))
+			await _interact(m.haon)
+			_check(GameState.currency == 20, "다시 하온과 말해도 보상 중복 없음")
+		"q2_calm":
+			_check(m.stage == S.Q2_CALM and m.world.anchor_built and not m.world.blocker_enabled("channel_mid") and not m.world.blocker_enabled("east_barrier"), "고정점·밧줄 다리·동쪽 다리 유지")
+			_check(m.ropes[0].checked and m.ropes[1].checked and m.dotom.state == Dotom.State.NEST and m.dotom.calm_enabled, "줄 조사 기록, 도톰은 둥지 곁에서 다가가기 대기")
+		"q2_follow":
+			_check(m.stage == S.Q2_CALM and not GameState.spirits.has("도톰") and m.dotom.state == Dotom.State.NEST and m.dotom.nest_at_home, "안내 도중 종료 → 계약 전 다가가기부터 (잃는 것 없음)")
+		"q2_contract":
+			_check(GameState.spirits.has("도톰") and GameState.active_spirit == "도톰" and m.dotom.state == Dotom.State.COMPANION and m.dotom.visible, "도톰 계약·활성·동행 유지")
+			_check(GameState.level == 3 and GameState.count("수초섬유") == 3 and not m.world.blocker_enabled("steps_barrier") and m.stage == S.Q3_TALK_HAON, "Q2 보상·점검로 계단·Q3 시작 유지")
+			_check(m.hud.spirit_form == "동행", "초상화 상태 동행")
+		"q3_gap":
+			_check(m.stage == S.Q3_GAP and p.gear == "도톰" and not m.dotom.visible and m.hud.spirit_form == "신발", "신발 상태·틈 건너기 단계 유지")
+			_check(m.world.leaf_marks.size() == 1 and GameState.flag("q3_detect") and p.position == Main.GAP_START, "잎 표시·탐지 기록 유지, 출발 발판에서 재개")
+			_check(p.step_cd == 0.0 and p.gyeol == p.max_gyeol, "재개 시 결력 가득·한 걸음 대기 없음")
+		"q3_done":
+			_check(m.stage == S.Q3_DONE and m.world.gap_fixed and not m.world.is_pit(Vector2(700, 100)) and m.world.backflow < 0.01, "보상 대사 도중 종료 → Q3 완료·점검로 복구")
+			_check(GameState.has_skill("되받기") and GameState.count("하천광") == 2 and GameState.claimed_rewards.has("Q3"), "Q3 보상 유지")
+		"q4_craft":
+			_check(m.stage == S.Q4_GO_MILL and GameState.weapon == "물길 장도", "제작 직후 종료 → 제작을 다시 요구하지 않음")
+			_check(GameState.currency == int(ex.get("currency", -1)) and GameState.count("하천광") == int(ex.get("ore", -1)) and GameState.count("수초섬유") == int(ex.get("fiber", -1)), "재료·재화 중복 차감 없음")
+		"q4_early":
+			_check(GameState.weapon_label() == "물길 장도 +1" and GameState.currency == int(ex.get("currency", -1)), "조기 +1 유지")
+			m._enter_stage(S.Q4_BLADE)
+			m._on_wave_fired(p.position, Vector2.RIGHT)
+			m.hud.skip_dialogue()
+			_check(m.stage == S.Q4_DONE and GameState.claimed_rewards.has("Q4"), "불러온 +1이 Q4 강화 목표로 인정")
+		"q4_contract":
+			_check(GameState.spirits.has("줄비") and GameState.temp_spirits.is_empty() and GameState.active_spirit == "줄비", "줄비 계약·활성 유지 (임시 동행 정리)")
+			_check(m.julbi.state == Julbi.State.COMPANION and m.julbi.visible and m.dotom.state == Dotom.State.RESTING, "줄비 동행, 도톰 휴식")
+			_check(m.stage == S.Q4_BLADE and m.hooks[0].checked and m.hooks[1].checked and m.bench_mill.visible, "연결쇠·공구대·검 체험 단계 유지")
+		"q5_drain":
+			_check(m.in_dungeon and m.dungeon.drained and m.stage == S.Q5_RESCUE and m.camera.limit_left == int(Dungeon.X0), "던전·배수 유지")
+			_check(p.position == Dungeon.ROOM2_START and m.worker.interactable, "2방 체크포인트에서 재개, 정비공 구조 대기")
+			_teleport(Vector2(1440, 990))
+			m.hud.forced_move = Vector2.UP
+			await _wait(2.4)
+			m.hud.forced_move = null
+			_check(p.position.y < Dungeon.POOL.position.y, "배수된 웅덩이를 지나갈 수 있음")
+		"q5_boss":
+			_check(m.stage == S.Q5_BOSS and p.position == Dungeon.ROOM3_START and m.dungeon.drained, "보스 중 종료 → 보스 방 입구, 배수 유지")
+			_check(m.boss.hp == m.boss.max_hp and m.boss.state != Boss.State.SLEEP and m.worker.hp == m.worker.max_hp and m.worker.wstate == Worker.WState.WAIT and m.worker.position == Dungeon.WAIT_SPOT, "보스·정비공 재도전 규칙대로 초기화")
+		"q5_choice":
+			_check(m.stage == S.Q5_END and not m.in_dungeon and GameState.flags.get("q5_ring_keeper", "") == "주민", "선택 직후 종료 → 마을 귀환·보관처 유지")
+			_check(GameState.currency == int(ex.get("currency", -1)) and GameState.count("조율 부품") == 1 and GameState.count("혈계·도구 수련권") == 1, "Q5 보상 1회 (재화 +60, 물품 1개씩)")
+			m._complete_q5(0)
+			await _wait(1.4)
+			m.hud.skip_dialogue()
+			_check(GameState.currency == int(ex.get("currency", -1)) and GameState.flags["q5_ring_keeper"] == "주민", "다시 선택해도 중복 지급·보관처 변경 없음")
+			_check(m.hud.end_lines.size() >= 4, "끝 카드 뒤에도 계속 둘러보기 가능")
+			m.hud.end_lines = []
+		"corrupt_main":
+			_check(sv.loaded_from == "backup" and sv.load_warning != "" and m.stage == S.GET_CRATE, "깨진 현재 저장 → 직전 정상 백업으로 복구 (%s)" % sv.loaded_from)
+			var kept := false
+			var dir := DirAccess.open(sv.path.get_base_dir())
+			for fname in dir.get_files():
+				if fname.begins_with(sv.path.get_file().get_basename() + ".corrupt-"):
+					kept = true
+			_check(kept and FileAccess.file_exists(sv.bak_path()), "깨진 원본은 따로 보관, 정상 백업도 유지")
+		"interrupted":
+			_check(sv.loaded_from == "tmp" and m.stage == S.GO_ENTRANCE, "교체 중 중단 → 완성된 임시 파일로 최신 진행 복구 (%s)" % sv.loaded_from)
+		"corrupt_all":
+			_check(sv.load_latest().is_empty() and sv.last_error != "" and m.stage == S.TALK_DANU, "현재·백업 모두 깨짐 → 정상 로드처럼 보이지 않고 오류 (%s)" % sv.last_error.substr(0, 40))
+			_check(FileAccess.file_exists(sv.path) and FileAccess.file_exists(sv.bak_path()), "원본 파일 보존")
