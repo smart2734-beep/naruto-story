@@ -1,6 +1,9 @@
 # Godot
 .godot/
-export_presets.cfg
+# export_presets.cfg는 공유한다 (서명 비밀번호는 Godot가 .godot/export_credentials.cfg에 따로 둔다)
 /android/
+/build/
 *.apk
 *.aab
+*.keystore
+*.jks
