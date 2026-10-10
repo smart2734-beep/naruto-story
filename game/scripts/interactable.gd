@@ -2,13 +2,14 @@ extends Node2D
 ## 상호작용 대상(NPC·물건). 가까이 가면 HUD에 action_label 버튼이 뜬다.
 
 var display_name := ""
-var kind := "npc"  # "npc" 또는 "crate"
+var kind := "npc"  # npc / crate / rope / spot
 var action_label := "대화"
 var body_color := Color("8a6a4a")
 var accent := Color("e8c070")
 var hair := Color("3a2a20")
 var interactable := true
 var marked := false
+var checked := false
 var walk_target = null
 var t := 0.0
 
@@ -36,6 +37,17 @@ func _draw() -> void:
 		draw_rect(Rect2(-9, -8, 18, 15), Color("5a3a1a"), false, 1.5)
 		draw_line(Vector2(-9, -1), Vector2(9, -1), Color("5a3a1a"), 1.5)
 		draw_circle(Vector2(0, -1), 2.0, Color("c0c8d0"))
+	elif kind == "rope":
+		# 느슨한 줄이 걸린 말뚝. 조사하면 checked.
+		draw_rect(Rect2(-3, -14, 6, 20), Color("5a3a20"))
+		var sag := 4.0 if not checked else 0.0
+		var pts := PackedVector2Array()
+		for i in 9:
+			var x := -2.0 + i * 3.5
+			pts.append(Vector2(x, -10 + sin(i / 8.0 * PI) * (6.0 + sag) + sin(t * 3.0 + i) * (1.0 if not checked else 0.0)))
+		draw_polyline(pts, Color("d8c090") if not checked else Color("8fdc5a"), 2.0)
+	elif kind == "spot":
+		pass  # 월드가 그리는 장치(손잡이 등)의 상호작용 지점
 	else:
 		draw_circle(Vector2(0, 2), 8.0, body_color)
 		draw_line(Vector2(-7, -2), Vector2(7, 6), accent, 2.0)
@@ -43,7 +55,7 @@ func _draw() -> void:
 		draw_arc(Vector2(0, -8), 6.0, PI, TAU, 10, hair, 3.0)
 
 	var f := GameState.world_font
-	if display_name != "":
+	if display_name != "" and (kind != "spot" or interactable):
 		draw_string_outline(f, Vector2(-40, -18), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, 3, Color(0, 0, 0, 0.7))
 		draw_string(f, Vector2(-40, -18), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, Color.WHITE)
 	if marked:

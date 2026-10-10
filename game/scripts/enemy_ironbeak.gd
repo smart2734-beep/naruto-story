@@ -76,7 +76,7 @@ func _physics_process(delta: float) -> void:
 			position += dir * step
 			traveled += step
 			if not hit_player and player and global_position.distance_to(player.global_position) < HIT_RADIUS:
-				hit_player = player.take_damage(DAMAGE, global_position)
+				hit_player = player.take_damage(DAMAGE, global_position, self) or player.guard_t > 0.0
 			if traveled >= SWOOP_DIST:
 				state = State.RECOVER
 				t = RECOVER_TIME

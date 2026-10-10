@@ -13,6 +13,11 @@ var items: Dictionary = {}
 var skills: Array[String] = []
 var weapon: String = "연습용 목도"
 var claimed_rewards: Dictionary = {}
+## 영물: 계약한 영물과 활성 칸. 첫 시제품은 활성 1칸 (기획서 6장 규칙 2).
+var spirits: Array[String] = []
+var active_spirit: String = ""
+## 퀘스트 기록 (예: Q3 성공 조건인 동행 탐지·장비 이동 효과 사용 여부)
+var flags: Dictionary = {}
 
 var ui_font: SystemFont
 var world_font: SystemFont
@@ -65,6 +70,22 @@ func learn_skill(skill: String) -> void:
 	if not skills.has(skill):
 		skills.append(skill)
 		changed.emit()
+
+
+func contract_spirit(id: String) -> void:
+	if not spirits.has(id):
+		spirits.append(id)
+	if active_spirit == "":
+		active_spirit = id
+	changed.emit()
+
+
+func set_flag(id: String, value = true) -> void:
+	flags[id] = value
+
+
+func flag(id: String) -> bool:
+	return bool(flags.get(id, false))
 
 
 func weapon_multiplier() -> float:

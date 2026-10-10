@@ -1,0 +1,498 @@
+extends Node
+## 개발용: 자동 점검(--autotest)과 장면 캡처(--shot=경로 --scenario=이름).
+## 실제 입력 대신 순간이동·직접 호출로 진행하되, 판정(피격·낙하·보상)은 게임 코드 그대로 쓴다.
+##
+## 캡처 장면: start, dialogue, aim, reward, q2_ropes, q2_calm, q2_follow, q3_marked, q3_shoe, q3_patrol, q3_done
+
+const Main := preload("res://scripts/main.gd")
+const Dotom := preload("res://scripts/spirit_dotom.gd")
+const Ironbeak := preload("res://scripts/enemy_ironbeak.gd")
+const Beetle := preload("res://scripts/enemy_beetle.gd")
+const Patrol := preload("res://scripts/enemy_patrol.gd")
+const World := preload("res://scripts/world.gd")
+
+var m  # main.gd
+var fails: Array[String] = []
+
+
+func start(main_node, args: PackedStringArray) -> void:
+	m = main_node
+	if args.has("--autotest"):
+		_autotest()
+	else:
+		_screenshot(m._arg_value(args, "--shot=", ""), m._arg_value(args, "--scenario=", "start"))
+
+
+# ── 공통 도우미 ───────────────────────────────────────────
+
+func _wait(sec: float) -> void:
+	await get_tree().create_timer(sec).timeout
+
+
+## 순간이동 뒤 _process가 한 번 이상 돌도록 기다린다.
+func _settle() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+
+func _teleport(p: Vector2) -> void:
+	m.player.position = p
+	m.player.velocity = Vector2.ZERO
+	m._last_player_pos = p
+	m.camera.reset_smoothing()
+
+
+func _interact(n) -> void:
+	await _settle()
+	m._on_interact(n)
+	m.hud.skip_dialogue()
+
+
+func _wait_state(e, st: int, timeout: float) -> bool:
+	var left := timeout
+	while left > 0.0:
+		if is_instance_valid(e) and e.state == st:
+			return true
+		await get_tree().physics_frame
+		left -= get_physics_process_delta_time()
+	return false
+
+
+func _wait_until(cond: Callable, timeout: float) -> bool:
+	var left := timeout
+	while left > 0.0:
+		if cond.call():
+			return true
+		await get_tree().process_frame
+		left -= get_process_delta_time()
+	return false
+
+
+func _check(ok: bool, what: String) -> void:
+	print(("  [OK]   " if ok else "  [FAIL] ") + what)
+	if not ok:
+		fails.append(what)
+
+
+func _enemy(kind: String, index := 0):
+	var n := 0
+	for e in m.enemies:
+		if is_instance_valid(e) and e.get_meta("kind") == kind:
+			if n == index:
+				return e
+			n += 1
+	return null
+
+
+func _dodge_toward(dir: Vector2) -> void:
+	m.hud.forced_move = dir
+	m.player.move_input = dir
+	m.player.try_dodge()
+	await _wait(0.45)
+	m.hud.forced_move = null
+
+
+# ── 자동 점검 ─────────────────────────────────────────────
+
+func _autotest() -> void:
+	await _wait(0.3)
+	await _test_q1()
+	await _test_q2()
+	await _test_q3()
+	print("=== RESULT: %s (%d fail) ===" % ["PASS" if fails.is_empty() else "FAIL", fails.size()])
+	get_tree().quit(0 if fails.is_empty() else 1)
+
+
+func _test_q1() -> void:
+	print("=== Q1 ===")
+	var p = m.player
+	_check(m.stage == Main.Stage.TALK_DANU, "시작 단계는 단우와 대화")
+	_teleport(m.danu.position + Vector2(0, 24))
+	await _settle()
+	_check(m.current_interact == m.danu, "단우 근처에서 상호작용 대상이 단우")
+	m._on_interact(m.current_interact)
+	_check(m.hud.dialogue_active(), "대화 시작")
+	m.hud.skip_dialogue()
+	_check(m.stage == Main.Stage.GET_CRATE, "대화 후 상자 받기 단계")
+
+	_teleport(m.crate.position + Vector2(-24, 0))
+	await _interact(m.crate)
+	_check(p.carrying and m.stage == Main.Stage.GO_ENTRANCE, "상자 받은 뒤 입구 이동 단계")
+
+	_teleport(Main.ENTRANCE + Vector2(0, -20))
+	await _settle()
+	_check(m.stage == Main.Stage.CROSS, "입구 도착 → 필드 진입")
+
+	var b1 = _enemy("ironbeak")
+	_teleport(b1.home + Vector2(0, 120))
+	_check(await _wait_state(b1, Ironbeak.State.AIM, 3.0), "철부리새가 근처 플레이어를 노려봄(예고)")
+	_check(m.hud.hint_text.begins_with("빨간 선"), "첫 예고 때 회피 안내 표시")
+	await _wait(1.3)
+	_check(p.hp < p.max_hp, "예고를 무시하면 피해를 입음 (체력 %d)" % roundi(p.hp))
+
+	b1.hp = b1.max_hp
+	p.respawn(b1.home + Vector2(0, 120))
+	p.hp = p.max_hp
+	b1.reset_to_home()
+	await _wait_state(b1, Ironbeak.State.AIM, 3.0)
+	await _wait(0.5)
+	await _dodge_toward(b1.dir.orthogonal())
+	await _wait(0.8)
+	_check(p.hp == p.max_hp, "예고 중 옆으로 회피하면 피해 없음")
+
+	var xp_before: int = GameState.xp
+	b1.take_hit(100.0, p.position)
+	_check(not b1.alive and GameState.xp == xp_before + 15, "철부리새 처치 시 경험치 +15")
+
+	_teleport(Main.ENTRANCE + Vector2(0, -200))
+	p.hp = 1.0
+	p.invuln = 0.0
+	p.take_damage(5.0, p.position + Vector2(0, 10))
+	_check(p.dead and m.hud.fade > 0.0, "체력 0 → 쓰러짐 화면")
+	await _wait(2.0)
+	_check(not p.dead and p.position.distance_to(Main.ENTRANCE) < 2.0 and p.carrying and p.hp == p.max_hp, "입구에서 재시작, 부품 유지, 체력 회복")
+
+	_teleport(m.haon.position + Vector2(0, 30))
+	await _interact(m.haon)
+	_check(GameState.level == 2 and GameState.currency == 20 and GameState.has_skill("사선베기") and GameState.weapon == "기본 장도", "Q1 보상: Lv.2, 재화 20, 사선베기, 기본 장도")
+	await _wait(3.0)
+	m.hud.skip_dialogue()
+	_check(m.world.backflow > 0.5 and m.stage == Main.Stage.TALK_MAEDEUP, "수문 역류 → 매듭 등장")
+	m._deliver_q1()
+	_check(GameState.currency == 20, "Q1 보상은 한 번만 지급")
+	await _wait(3.0)
+	m.hud.skip_dialogue()
+
+	await _settle()
+	p.gyeol = 100.0
+	p.skill_cd = 0.0
+	_check(p.try_skill() and absf(p.gyeol - 85.0) < 0.01, "사선베기 사용 시 결력 15 소모")
+	_check(not p.try_skill(), "재사용 대기 중에는 다시 쓸 수 없음")
+
+
+func _test_q2() -> void:
+	print("=== Q2 ===")
+	var p = m.player
+	var w = m.world
+	_check(w.blocker_enabled("east_barrier"), "Q2 전에는 동쪽 다리 통제선이 막혀 있음")
+	_teleport(m.maedeup.position + Vector2(0, 20))
+	await _interact(m.maedeup)
+	await _settle()
+	_check(m.stage == Main.Stage.Q2_GO_BANK and not w.blocker_enabled("east_barrier"), "매듭 대화 → Q2 시작, 통제선 열림")
+
+	# 실제로 걸어서 다리를 건넌다
+	_teleport(Vector2(270, 904))
+	m.hud.forced_move = Vector2.RIGHT
+	var crossed: bool = await _wait_until(func(): return m.stage == Main.Stage.Q2_ROPES, 3.0)
+	m.hud.forced_move = null
+	_check(crossed, "걸어서 다리를 건너 젖은 둑 도착")
+
+	_teleport(m.ropes[0].position + Vector2(-26, 0))
+	await _interact(m.ropes[0])
+	_check(m.ropes[0].checked and m.stage == Main.Stage.Q2_ROPES, "느슨한 줄 1 조사 (1/2)")
+
+	# 젖은 발판에 오래 서 있으면 무너진다
+	_teleport(Vector2(600, 780))
+	await _wait(1.0)
+	_check(p.falling, "젖은 나무 발판에 멈춰 있으면 붕괴")
+	await _wait(0.8)
+	_check(not p.falling and p.position == Main.EAST_BANK, "가까운 둑(동쪽 둑)에서 재시작")
+	# 멈추지 않고 건너면 무너지지 않는다
+	_teleport(Vector2(600, 815))
+	m.hud.forced_move = Vector2.UP
+	await _wait(0.6)
+	m.hud.forced_move = null
+	_check(not p.falling and p.position.y < 760.0, "젖은 발판을 멈추지 않고 건너면 안전")
+
+	# 진흙은 걸어서 못 들어가고, 회피로는 넘을 수 있다
+	_teleport(Vector2(450, 820))
+	m.hud.forced_move = Vector2.UP
+	await _wait(0.5)
+	m.hud.forced_move = null
+	_check(p.position.y > 795.0 and not p.falling, "진흙 띠는 걸어서 들어갈 수 없음")
+
+	# 덩굴딱정벌레: 돌진 → 빈틈
+	var bt = _enemy("beetle", 1)
+	p.respawn(bt.home + Vector2(0, -100))
+	p.hp = p.max_hp
+	_check(await _wait_state(bt, Beetle.State.AIM, 5.0), "덩굴딱정벌레가 돌진을 예고")
+	_check(await _wait_state(bt, Beetle.State.STUNNED, 3.0), "돌진 뒤 덩굴이 엉킨 빈틈")
+	var hp_before: float = bt.hp
+	bt.take_hit(10.0, p.position)
+	_check(absf((hp_before - bt.hp) - 15.0) < 0.01, "빈틈에 공격하면 피해 1.5배")
+	bt.take_hit(999.0, p.position)
+	await _wait(0.1)
+
+	_teleport(m.ropes[1].position + Vector2(-26, 0))
+	await _interact(m.ropes[1])
+	_check(m.stage == Main.Stage.Q2_GET_ROPE, "줄 2개 조사 → 매듭에게 밧줄 받기")
+	_teleport(m.maedeup.position + Vector2(0, 20))
+	await _interact(m.maedeup)
+	_check(m.stage == Main.Stage.Q2_ANCHOR and GameState.items.get("밧줄", 0) == 1, "밧줄 받음 → 고정점 설치 단계")
+	_teleport(Main.ANCHOR_SPOT + Vector2(-20, 0))
+	await _interact(m.anchor_spot)
+	await _settle()
+	_check(w.anchor_built and not w.blocker_enabled("channel_mid") and m.stage == Main.Stage.Q2_CALM, "고정점 설치 → 섬으로 밧줄 다리")
+
+	# 도톰: 뛰어서 다가가면 숨는다
+	var d = m.dotom
+	_teleport(d.position + Vector2(-90, 0))
+	m.hud.forced_move = Vector2.RIGHT
+	var startled: bool = await _wait_until(func(): return d.state == Dotom.State.HIDE, 2.0)
+	m.hud.forced_move = null
+	_check(startled, "도톰에게 뛰어가면 놀라서 숨음")
+	await _wait(3.0)
+	_check(d.state == Dotom.State.NEST, "잠시 뒤 다시 둥지로 돌아옴 (영구 실패 없음)")
+	# 가까이에서 멈춰 기다리면 다가온다
+	_teleport(d.position + Vector2(-100, 0))
+	var trusted: bool = await _wait_until(func(): return m.hud.dialogue_active(), 5.0)
+	_check(trusted, "멈춰서 기다리면 도톰이 먼저 다가옴")
+	m.hud.skip_dialogue()
+	_check(m.stage == Main.Stage.Q2_FOLLOW and d.has_nest, "도톰이 둥지를 지고 앞장섬")
+	# 따라간다 (도톰 뒤를 걷는다)
+	var arrived: bool = await _wait_until(func():
+		if d.state == Dotom.State.LEAD:
+			_teleport(d.position + (d.face * -40.0 if d.face != Vector2.ZERO else Vector2(40, 0)))
+		return m.stage == Main.Stage.Q2_CONTRACT, 25.0)
+	_check(arrived, "도톰을 따라 안전한 둑 도착")
+	m.hud.skip_dialogue()
+	_check(GameState.spirits.has("도톰") and GameState.level == 3 and GameState.items.get("수초섬유", 0) == 3, "Q2 보상: 도톰 계약, Lv.3, 수초섬유 3")
+	_check(d.state == Dotom.State.COMPANION and m.hud.spirit_form == "동행", "도톰 동행 시작, 초상화 표시")
+	_check(m.stage == Main.Stage.Q3_TALK_HAON, "Q3 개방: 하온에게")
+
+
+func _test_q3() -> void:
+	print("=== Q3 ===")
+	var p = m.player
+	var w = m.world
+	var d = m.dotom
+	await _settle()
+	_check(not w.blocker_enabled("steps_barrier"), "점검로 계단 열림")
+	_teleport(m.haon.position + Vector2(0, 26))
+	await _interact(m.haon)
+	_check(m.stage == Main.Stage.Q3_FIND, "하온 대화 → 동행 도톰과 틈 앞으로")
+
+	# 동행 탐지
+	_teleport(Main.GAP_START)
+	d.position = Main.GAP_START + Vector2(-20, 10)
+	var marked: bool = await _wait_until(func(): return m.stage == Main.Stage.Q3_TRANSFORM, 4.0)
+	_check(marked and GameState.flag("q3_detect") and w.leaf_marks.size() == 1, "도톰 동행 탐지 → 안전 발판에 잎 표시")
+
+	# 신발 없이 회피하면 틈에 빠진다 (연습 구간: 결력 회복)
+	_teleport(Vector2(630, 60))
+	p.gyeol = 40.0
+	await _dodge_toward(Vector2.RIGHT)
+	_check(p.falling, "일반 회피로는 틈을 못 건넘")
+	await _wait(0.8)
+	_check(p.position == Main.GAP_START and p.gyeol == p.max_gyeol, "출발 발판 복귀, 연습 구간이라 결력 즉시 회복")
+
+	# 변신 (전투 밖: 짧은 연출)
+	m._on_portrait()
+	_check(absf(p.transform_t - Main.TRANSFORM_CALM) < 0.05, "전투 밖 변신은 짧은 연출 (%.1f초)" % Main.TRANSFORM_CALM)
+	await _wait(1.0)
+	_check(p.shoe and d.state == Dotom.State.EQUIPPED and not d.visible and m.hud.spirit_form == "신발", "도톰이 신발로 변신 (동행 효과 없음)")
+	_check(m.stage == Main.Stage.Q3_GAP, "틈 건너기 단계")
+
+	# 잘못된 발판(가운데)로 건너면 무너진다
+	_teleport(Vector2(630, 100))
+	await _dodge_toward(Vector2.RIGHT)
+	await _wait(0.2)
+	_check(p.falling, "잎 표시가 없는 발판에 착지하면 붕괴")
+	await _wait(0.8)
+	p.step_cd = 0.0
+	# 잎 표시 발판으로 건너기
+	_teleport(Vector2(630, 60))
+	p.gyeol = 100.0
+	await _dodge_toward(Vector2.RIGHT)
+	await _wait(0.3)
+	_check(not p.falling and p.position.x > 760.0, "신발의 추가 한 걸음으로 틈 건넘 (x=%d)" % roundi(p.position.x))
+	_check(GameState.flag("q3_step") and absf(p.gyeol - 90.0) < 1.0, "추가 한 걸음: 결력 10 소모, 사용 기록")
+	_teleport(Vector2(835, 60))
+	await _settle()
+	_check(m.stage == Main.Stage.Q3_HANDLE, "건너편 도착 → 손잡이 단계")
+
+	# 순찰기: 앞에 있으면 맞고, 뒤에 있으면 안전
+	var pt = _enemy("patrol")
+	pt.position = Vector2(900, 100)
+	pt.facing = -1.0
+	pt.state = Patrol.State.PATROL
+	pt.turn_wait = 5.0
+	p.respawn(Vector2(840, 100))
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	_check(await _wait_state(pt, Patrol.State.AIM, 2.0), "순찰기가 앞쪽 일직선의 플레이어를 예고")
+	await _wait(1.2)
+	_check(p.hp < p.max_hp, "예고를 무시하면 직선 공격에 맞음")
+	pt.state = Patrol.State.PATROL
+	pt.facing = -1.0
+	pt.turn_wait = 5.0
+	p.hp = p.max_hp
+	p.invuln = 0.0
+	_teleport(Vector2(960, 100))
+	await _wait(1.5)
+	_check(pt.state == Patrol.State.PATROL and p.hp == p.max_hp, "순찰기 뒤쪽은 안전")
+
+	# 전투 중 변신: 2초 준비, 맞으면 취소
+	m.spirit_switch_cd = 0.0
+	_teleport(Vector2(940, 100))
+	await _settle()
+	m._on_portrait()
+	_check(absf(p.transform_t - Main.TRANSFORM_COMBAT) < 0.05, "전투 중 변신은 2초 준비")
+	p.invuln = 0.0
+	p.take_damage(1.0, pt.position, pt)
+	_check(p.transform_t == 0.0 and p.shoe, "준비 중 맞으면 변신 취소 (신발 유지)")
+
+	# 되받기는 Q3 보상 전이라 아직 없음
+	_check(not p.try_guard(), "되받기는 아직 배우지 않음")
+
+	_teleport(World.HANDLE_POS + Vector2(-20, 20))
+	await _interact(m.handle_spot)
+	_check(GameState.level == 4 and GameState.has_skill("되받기") and GameState.items.get("하천광", 0) == 2 and GameState.items.has("물길 장도 도안"), "Q3 보상: Lv.4, 되받기, 하천광 2, 물길 장도 도안")
+	_check(w.gap_fixed and not w.is_pit(Vector2(700, 100)), "압력 해제 → 끊긴 점검로 복구")
+	_check(m.stage == Main.Stage.Q3_DONE, "Q4 예고 단계")
+	await _wait(1.8)
+	_check(w.backflow < 0.1, "역류 멈춤")
+
+	# 되받기: 막고 반격
+	pt.state = Patrol.State.PATROL
+	var pt_hp: float = pt.hp
+	p.respawn(pt.position + Vector2(-30, 0))
+	p.hp = p.max_hp
+	p.gyeol = 100.0
+	_check(p.try_guard(), "되받기 사용 (결력 12)")
+	p.invuln = 0.0
+	p.take_damage(20.0, pt.position, pt)
+	_check(p.hp == p.max_hp and pt.hp < pt_hp, "되받기 중 맞으면 피해 없이 반격")
+
+
+# ── 캡처 ─────────────────────────────────────────────────
+
+func _screenshot(path: String, scenario: String) -> void:
+	await _wait(0.4)
+	if scenario != "start" and scenario != "dialogue" and scenario != "aim" and scenario != "reward":
+		await _fast_forward_to_q2()
+	match scenario:
+		"dialogue":
+			_teleport(m.danu.position + Vector2(0, 24))
+			await _wait(0.2)
+			m._on_interact(m.danu)
+			await _wait(2.5)
+		"aim":
+			m.hud.skip_dialogue()
+			m._enter_stage(Main.Stage.CROSS)
+			m.player.carrying = true
+			m.hud.clear_hint()
+			var b = _enemy("ironbeak")
+			_teleport(b.home + Vector2(-30, 110))
+			await _wait_state(b, Ironbeak.State.AIM, 3.0)
+			await _wait(0.45)
+		"reward":
+			m._enter_stage(Main.Stage.CROSS)
+			m.player.carrying = true
+			_teleport(m.haon.position + Vector2(0, 30))
+			await _wait(0.2)
+			m._on_interact(m.haon)
+			m.hud.skip_dialogue()
+			await _wait(0.6)
+		"q2_ropes":
+			var bt = _enemy("beetle", 0)
+			_teleport(m.ropes[0].position + Vector2(-20, -40))
+			await _wait_state(bt, Beetle.State.AIM, 5.0)
+			await _wait(0.35)
+		"q2_calm":
+			await _to_calm()
+			_teleport(m.dotom.position + Vector2(-80, 10))
+			await _wait(0.6)
+		"q2_follow":
+			await _to_calm()
+			_teleport(m.dotom.position + Vector2(-100, 0))
+			await _wait_until(func(): return m.hud.dialogue_active(), 5.0)
+			m.hud.skip_dialogue()
+			await _wait(2.5)
+			_teleport(m.dotom.position + Vector2(50, 20))
+			await _wait(0.4)
+		"q3_marked", "q3_shoe", "q3_patrol", "q3_done":
+			await _to_q3()
+			_teleport(Main.GAP_START)
+			m.dotom.position = Main.GAP_START + Vector2(-20, 10)
+			await _wait_until(func(): return m.stage == Main.Stage.Q3_TRANSFORM, 4.0)
+			await _wait(0.3)
+			if scenario != "q3_marked":
+				m._on_portrait()
+				await _wait(1.0)
+				m.hud.clear_hint()
+				_teleport(Vector2(630, 60))
+				await _wait(0.3)
+			if scenario == "q3_shoe":
+				m.hud.forced_move = Vector2.RIGHT
+				m.player.move_input = Vector2.RIGHT
+				m.player.try_dodge()
+				await _wait(0.27)
+			elif scenario == "q3_patrol":
+				var pt = _enemy("patrol")
+				pt.position = Vector2(960, 100)
+				pt.facing = -1.0
+				pt.turn_wait = 5.0
+				_teleport(Vector2(850, 90))
+				await _wait_state(pt, Patrol.State.AIM, 3.0)
+				await _wait(0.4)
+			elif scenario == "q3_done":
+				_teleport(Vector2(850, 90))
+				await _settle()
+				_teleport(World.HANDLE_POS + Vector2(-20, 20))
+				await _settle()
+				m._on_interact(m.handle_spot)
+				m.hud.skip_dialogue()
+				await _wait(2.0)
+		_:
+			await _wait(0.6)
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	img.save_png(path)
+	print("saved ", path)
+	get_tree().quit()
+
+
+func _fast_forward_to_q2() -> void:
+	m.hud.clear_hint()
+	m._enter_stage(Main.Stage.CROSS)
+	m.player.carrying = true
+	m._deliver_q1()
+	m.hud.toasts.clear()
+	await _wait(2.6)
+	m.hud.skip_dialogue()
+	m._start_q2()
+	_teleport(Main.EAST_BANK)
+	await _settle()
+	m.hud.clear_hint()
+
+
+func _to_calm() -> void:
+	for r in m.ropes:
+		_teleport(r.position + Vector2(-26, 0))
+		await _interact(r)
+	_teleport(m.maedeup.position + Vector2(0, 20))
+	await _interact(m.maedeup)
+	_teleport(Main.ANCHOR_SPOT + Vector2(-20, 0))
+	await _interact(m.anchor_spot)
+	m.hud.toasts.clear()
+	for e in m.enemies:
+		if e.get_meta("kind") == "beetle":
+			e.take_hit(999.0, Vector2.ZERO)
+
+
+func _to_q3() -> void:
+	await _to_calm()
+	_teleport(m.dotom.position + Vector2(-100, 0))
+	await _wait_until(func(): return m.hud.dialogue_active(), 5.0)
+	m.hud.skip_dialogue()
+	await _wait_until(func():
+		if m.dotom.state == Dotom.State.LEAD:
+			_teleport(m.dotom.position + Vector2(40, 0))
+		return m.stage == Main.Stage.Q2_CONTRACT, 25.0)
+	m.hud.skip_dialogue()
+	m.hud.toasts.clear()
+	_teleport(m.haon.position + Vector2(0, 26))
+	await _interact(m.haon)
+	m.hud.clear_hint()
+	m.hud.toasts.clear()

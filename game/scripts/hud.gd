@@ -2,9 +2,10 @@ extends CanvasLayer
 ## 세로 화면 HUD와 터치 입력.
 ## 왼쪽 아래 이동 패드(누른 자리에 생김), 오른쪽 아래 회피·기술·상호작용 버튼.
 ## 튜토리얼 안내는 한 번에 한 동작만 보여준다 (기획서 10장).
-## PC 테스트용 키: WASD/방향키 이동, Space 회피, Q 기술, E 상호작용·대사 넘기기.
+## PC 테스트용 키: WASD/방향키 이동, Space 회피, Q 사선베기, F 되받기, R 영물 전환, E 상호작용·대사 넘기기.
 
 signal interact_pressed
+signal portrait_pressed
 
 const JOY_R := 90.0
 const TYPE_SPEED := 45.0
@@ -15,6 +16,8 @@ var objective_title := ""
 var objective_text := ""
 var target_world = null  ## 목표 위치(화면 밖이면 가장자리 화살표)
 var interact_label := ""
+var spirit_form := ""  ## "" = 계약 전(숨김), "동행" 또는 "신발"
+var spirit_cd := 0.0  ## 전환 대기 비율 0~1
 
 var hint_text := ""
 var hint_time := -1.0  ## < 0 이면 지울 때까지 유지
@@ -32,6 +35,7 @@ var joy_index := -1
 var joy_origin := Vector2.ZERO
 var joy_pos := Vector2.ZERO
 var joy_vec := Vector2.ZERO
+var forced_move = null  ## 자동 점검용 이동 입력 (Vector2 또는 null)
 var pressed_flash: Dictionary = {}
 
 var _canvas: Control
@@ -115,6 +119,18 @@ func _interact_c() -> Vector2:
 	return Vector2(_size().x - 130, _size().y - 352)
 
 
+func _portrait_c() -> Vector2:
+	return Vector2(84, _size().y - 372)
+
+
+func _guard_c() -> Vector2:
+	return Vector2(_size().x - 252, _size().y - 270)
+
+
+func _guard_visible() -> bool:
+	return GameState.has_skill("되받기")
+
+
 func _skill_visible() -> bool:
 	return GameState.has_skill("사선베기")
 
@@ -136,6 +152,12 @@ func _input(event: InputEvent) -> void:
 			elif _skill_visible() and e.position.distance_to(_skill_c()) < 64.0:
 				_flash("skill")
 				player.try_skill()
+			elif _guard_visible() and e.position.distance_to(_guard_c()) < 60.0:
+				_flash("guard")
+				player.try_guard()
+			elif spirit_form != "" and e.position.distance_to(_portrait_c()) < 58.0:
+				_flash("portrait")
+				portrait_pressed.emit()
 			elif interact_label != "" and e.position.distance_to(_interact_c()) < 66.0:
 				_flash("interact")
 				interact_pressed.emit()
@@ -172,6 +194,11 @@ func _input(event: InputEvent) -> void:
 				player.try_dodge()
 			KEY_Q:
 				player.try_skill()
+			KEY_F:
+				player.try_guard()
+			KEY_R:
+				if spirit_form != "":
+					portrait_pressed.emit()
 			KEY_E, KEY_ENTER:
 				if interact_label != "":
 					interact_pressed.emit()
@@ -212,7 +239,9 @@ func _advance_dialogue() -> void:
 func _process(delta: float) -> void:
 	if player:
 		var kb := _keyboard_vector()
-		if dialogue_active() or fade > 0.0:
+		if forced_move != null:
+			player.move_input = forced_move
+		elif dialogue_active() or fade > 0.0:
 			player.move_input = Vector2.ZERO
 		elif joy_index != -1:
 			player.move_input = joy_vec
@@ -349,8 +378,12 @@ func _draw_controls(s: Vector2) -> void:
 	if _skill_visible():
 		var ratio: float = player.skill_cd / player.SKILL_CD
 		_round_button(_skill_c(), 56.0, "사선베기", Color(0.15, 0.55, 0.5, 0.85), "skill", ratio, "결력 15", player.gyeol >= player.SKILL_COST)
+	if _guard_visible():
+		_round_button(_guard_c(), 52.0, "되받기", Color(0.45, 0.4, 0.7, 0.85), "guard", player.guard_cd / player.GUARD_CD, "결력 12", player.gyeol >= player.GUARD_COST)
 	if interact_label != "":
 		_round_button(_interact_c(), 58.0, interact_label, Color(0.8, 0.6, 0.15, 0.9), "interact")
+	if spirit_form != "":
+		_draw_portrait()
 
 
 func _draw_dialogue(s: Vector2) -> void:
@@ -381,8 +414,45 @@ func _draw_toasts(s: Vector2) -> void:
 	var tst: Array = toasts[0]
 	var life := float(tst[1])
 	var a := clampf(minf(life / 0.3, (TOAST_TIME - life) / 0.15), 0.0, 1.0)
-	var rect := Rect2(s.x * 0.5 - 230, 352 - (1.0 - a) * 12.0, 460, 54)
+	var tw := GameState.ui_font.get_string_size(String(tst[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 25).x
+	var w := clampf(tw + 56.0, 320.0, s.x - 32.0)
+	var rect := Rect2(s.x * 0.5 - w * 0.5, 352 - (1.0 - a) * 12.0, w, 54)
 	_panel(rect, Color(0.05, 0.2, 0.18, 0.9 * a), Color(0.5, 0.85, 0.76, a))
 	_text(rect.position + Vector2(0, 37), String(tst[0]), 25, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_CENTER, rect.size.x)
 	if toasts.size() > 1:
 		_text(rect.position + Vector2(0, 76), "+%d" % (toasts.size() - 1), 18, Color(1, 1, 1, 0.6 * a), HORIZONTAL_ALIGNMENT_CENTER, rect.size.x)
+
+## 영물 초상화: 누르면 동행 ↔ 장비 전환. 변신 준비 중이면 초록 고리가 찬다.
+func _draw_portrait() -> void:
+	var c := _portrait_c()
+	var r := 50.0
+	var bg := Color(0.18, 0.28, 0.14, 0.9)
+	if pressed_flash.has("portrait"):
+		bg = bg.lightened(0.3)
+	_canvas.draw_circle(c, r, bg)
+	_canvas.draw_arc(c, r, 0, TAU, 40, Color("8fdc5a"), 3.0)
+	if spirit_form == "신발":
+		# 이끼 무늬 신발
+		_canvas.draw_circle(c + Vector2(-12, -2), 13.0, Color("6a8a40"))
+		_canvas.draw_circle(c + Vector2(12, -2), 13.0, Color("6a8a40"))
+		_canvas.draw_circle(c + Vector2(-12, -4), 4.0, Color("b0e070"))
+		_canvas.draw_circle(c + Vector2(12, -4), 4.0, Color("b0e070"))
+	else:
+		_canvas.draw_circle(c + Vector2(0, -2), 22.0, Color("6a8a40"))
+		_canvas.draw_circle(c + Vector2(-13, -20), 6.0, Color("5a7a34"))
+		_canvas.draw_circle(c + Vector2(13, -20), 6.0, Color("5a7a34"))
+		_canvas.draw_circle(c + Vector2(-7, -4), 3.0, Color("1a1a10"))
+		_canvas.draw_circle(c + Vector2(7, -4), 3.0, Color("1a1a10"))
+	if spirit_cd > 0.0:
+		var pts := PackedVector2Array([c])
+		for i in 33:
+			var a := -PI / 2.0 + TAU * spirit_cd * i / 32.0
+			pts.append(c + Vector2(cos(a), sin(a)) * r)
+		_canvas.draw_colored_polygon(pts, Color(0, 0, 0, 0.5))
+	if player and player.transform_t > 0.0 and player.transform_total > 0.0:
+		var p: float = 1.0 - player.transform_t / player.transform_total
+		_canvas.draw_arc(c, r + 8.0, -PI / 2.0, -PI / 2.0 + TAU * p, 40, Color("b0ff70"), 6.0)
+	if spirit_form == "신발" and player and player.step_cd > 0.0:
+		var sp: float = player.step_cd / player.STEP_CD
+		_canvas.draw_arc(c, r - 6.0, -PI / 2.0, -PI / 2.0 + TAU * sp, 30, Color(1, 1, 1, 0.5), 4.0)
+	_text(Vector2(c.x - 70, c.y + r + 26), "도톰 · " + spirit_form, 20, Color("d8f0b0"), HORIZONTAL_ALIGNMENT_CENTER, 140)
