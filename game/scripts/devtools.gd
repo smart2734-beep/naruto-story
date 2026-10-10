@@ -10,6 +10,7 @@ const Ironbeak := preload("res://scripts/enemy_ironbeak.gd")
 const Beetle := preload("res://scripts/enemy_beetle.gd")
 const Patrol := preload("res://scripts/enemy_patrol.gd")
 const World := preload("res://scripts/world.gd")
+const Julbi := preload("res://scripts/spirit_julbi.gd")
 
 var m  # main.gd
 var fails: Array[String] = []
@@ -105,6 +106,8 @@ func _autotest() -> void:
 		await _section("Q2", _test_q2)
 		await _section("Q3", _test_q3)
 		await _section("영물 규칙", _test_spirit_rules)
+		await _section("Q4", _test_q4)
+		await _section("HUD", _test_hud)
 	for line in _summary:
 		print(line)
 	print("=== RESULT: %s (%d fail) ===" % ["PASS" if fails.is_empty() else "FAIL", fails.size()])
@@ -395,7 +398,7 @@ func _test_q3() -> void:
 
 func _screenshot(path: String, scenario: String) -> void:
 	await _wait(0.4)
-	if scenario != "start" and scenario != "dialogue" and scenario != "aim" and scenario != "reward":
+	if not scenario in ["start", "dialogue", "aim", "reward", "info"]:
 		await _fast_forward_to_q2()
 	match scenario:
 		"dialogue":
@@ -470,6 +473,64 @@ func _screenshot(path: String, scenario: String) -> void:
 				m._on_interact(m.handle_spot)
 				m.hud.skip_dialogue()
 				await _wait(2.0)
+		"info":
+			m.hud.info_open = true
+			m.hud.info_time = 99.0
+			await _wait(0.3)
+		"q4_craft":
+			await _to_q4()
+			_teleport(m.bench_village.position + Vector2(0, 26))
+			await _settle()
+			m._on_interact(m.bench_village)
+			await _wait(0.3)
+		"q4_hooks":
+			await _to_q4()
+			m._on_craft("craft:물길 장도")
+			m.hud.skip_dialogue()
+			_teleport(Main.RING_POS + Vector2(0, -24))
+			await _interact(m.ring_spot)
+			m.set_active_spirit("줄비")
+			m.hud.toasts.clear()
+			_teleport(Main.RING_POS + Vector2(-20, -40))
+			await _wait_until(func(): return m.hooks[0].interactable, 4.0)
+			await _wait(0.2)
+		"q4_wave", "q4_done":
+			await _to_q4()
+			m._on_craft("craft:물길 장도")
+			m.hud.skip_dialogue()
+			_teleport(Main.RING_POS + Vector2(0, -24))
+			await _interact(m.ring_spot)
+			m.set_active_spirit("줄비")
+			_teleport(Main.RING_POS + Vector2(0, -30))
+			for i in 2:
+				await _wait_until(func(): return m.hooks[i].interactable, 4.0)
+				_teleport(m.hooks[i].position + Vector2(0, -22))
+				await _interact(m.hooks[i])
+			_teleport(Main.RING_POS + Vector2(0, -24))
+			await _interact(m.ring_spot)
+			m._on_portrait()
+			m.hud.toasts.clear()
+			m.hud.clear_hint()
+			if scenario == "q4_wave":
+				m.player.gyeol = 100.0
+				_teleport(m.dummy.position + Vector2(-130, 0))
+				m.hud.forced_move = Vector2.RIGHT
+				m.player.move_input = Vector2.RIGHT
+				m.player.try_dodge()
+				await _wait(0.33)
+				m.hud.forced_move = null
+			else:
+				m._enter_stage(Main.Stage.Q4_UPGRADE)
+				GameState.add_item("하천광", 2)
+				_teleport(Main.BENCH_MILL + Vector2(0, -26))
+				await _settle()
+				m._on_interact(m.bench_mill)
+				m._on_craft("upgrade")
+				m.hud.skip_dialogue()
+				m.hud.toasts.clear()
+				m.hud.clear_hint()
+				_teleport(World.HATCH.get_center() + Vector2(0, -40))
+				await _wait(0.4)
 		_:
 			await _wait(0.6)
 	await RenderingServer.frame_post_draw
@@ -607,3 +668,194 @@ func _test_spirit_rules() -> void:
 	await _settle()
 	m._on_portrait()
 	_check(not p.shoe and d.state == Dotom.State.COMPANION, "대기시간이 끝나면 다시 전환 가능")
+
+func _test_q4() -> void:
+	var p = m.player
+	var d = m.dotom
+	var j = m.julbi
+	m.hud.skip_dialogue()
+	_check(m.stage == Main.Stage.Q3_DONE and m.dogyeom.marked, "Q3 완료 → 도겸에게 고리 보여주기")
+	var cur_before: int = GameState.currency
+	var ore_before: int = GameState.count("하천광")
+	_teleport(m.dogyeom.position + Vector2(0, 26))
+	await _interact(m.dogyeom)
+	_check(m.stage == Main.Stage.Q4_CRAFT and GameState.known_recipes.has("물길 장도") and not GameState.items.has("물길 장도 도안"), "도안 제출 → 물길 장도 제작법 등록")
+	_check(GameState.currency == cur_before + 50 and GameState.count("하천광") == ore_before + 2, "제작 지원금 50, 하천광 2")
+	m._grant_q4_support()
+	_check(GameState.currency == cur_before + 50, "도안 지원금은 한 번만 지급")
+
+	# 작업대: 다른 허용 제작(기본 장도 강화)에 재료를 먼저 써 본다
+	_teleport(m.bench_village.position + Vector2(0, 26))
+	await _interact(m.bench_village)
+	_check(m.hud.craft_open() and m.hud.craft_rows.size() == 2, "작업대 한 화면: 제작 1 + 강화 1")
+	m._on_craft("upgrade")
+	_check(GameState.weapon == "기본 장도" and GameState.weapon_plus == 1, "다른 허용 제작: 기본 장도 +1")
+	m._on_craft("craft:물길 장도")
+	_check(GameState.weapon == "물길 장도" and GameState.weapon_plus == 0 and absf(GameState.weapon_multiplier() - 1.35) < 0.001, "물길 장도 제작 (성능 ×1.35, 특성 보유)")
+	_check(not m.hud.craft_open() and m.hud.dialogue_active(), "제작 뒤 작업대를 닫고 도겸 대사")
+	m.hud.skip_dialogue()
+	_check(m.stage == Main.Stage.Q4_GO_MILL, "방앗간 앞방 조사 단계")
+
+	_teleport(Main.RING_POS + Vector2(0, -24))
+	await _interact(m.ring_spot)
+	_check(m.stage == Main.Stage.Q4_SWAP and GameState.temp_spirits.has("줄비") and m.hud.spirit_can_swap, "걸린 고리 조사 → 줄비 임시 동행 가능")
+	_check(not m._in_combat(), "허수아비는 전투 판정에서 제외")
+
+	# 전투 중에는 교체 불가
+	var foe = Patrol.new()
+	foe.min_x = 960.0
+	foe.max_x = 960.0
+	m._add_enemy(foe, Main.RING_POS + Vector2(0, -120), "patrol")
+	foe.player = p
+	foe.facing = 1.0
+	foe.turn_wait = 999.0
+	await _settle()
+	m._on_portrait_long()
+	_check(GameState.active_spirit == "도톰", "전투 중에는 활성 영물 교체 불가")
+	foe.take_hit(9999.0, Vector2.ZERO)
+	await _wait(0.6)
+	m._switch_cd["도톰"] = 5.0
+	m._on_portrait_long()
+	await _settle()
+	_check(m.spirit_switch_cd == 0.0 and float(m._switch_cd["도톰"]) > 4.0, "전환 대기시간은 영물마다 따로 (도톰 대기 중에도 줄비는 0)")
+	m._switch_cd["도톰"] = 0.0
+	_check(GameState.active_spirit == "줄비" and d.state == Dotom.State.RESTING and not d.visible and j.visible and j.state in [Julbi.State.COMPANION, Julbi.State.MARKING], "길게 눌러 교체: 줄비 동행, 도톰은 휴식")
+	_check(m.stage == Main.Stage.Q4_UNHOOK, "연결쇠 풀기 단계")
+	m._on_portrait()
+	_check(p.gear == "", "계약 전 임시 동행은 변신할 수 없음")
+
+	# 줄비 동행 탐지 → 연결쇠 풀기
+	_teleport(Main.RING_POS + Vector2(0, -30))
+	for i in 2:
+		var found: bool = await _wait_until(func(): return m.hooks[i].interactable, 4.0)
+		_check(found, "줄비가 연결쇠 %d을 찾아 표시" % (i + 1))
+		_teleport(m.hooks[i].position + Vector2(0, -22))
+		await _interact(m.hooks[i])
+		_teleport(Main.RING_POS + Vector2(0, -30))
+	_check(m.stage == Main.Stage.Q4_REPAIR and m.bench_mill.visible and m.dogyeom.position == Main.DOGYEOM_MILL, "연결쇠 2개 → 도겸 도착, 손잡이 수선 단계")
+	_teleport(Main.RING_POS + Vector2(0, -24))
+	await _interact(m.ring_spot)
+	_check(GameState.spirits.has("줄비") and not GameState.temp_spirits.has("줄비") and m.stage == Main.Stage.Q4_BLADE, "무료 손잡이 수선 → 줄비 계약")
+
+	# 줄비 검: 배타성과 파동
+	m._on_portrait()
+	await _settle()
+	_check(p.gear == "줄비" and p.blade and not p.shoe and not j.visible and m.hud.spirit_form == "검", "줄비 검 변신 (동행 효과 없음)")
+	_check(absf(p.damage_multiplier() - 1.35 * 1.04) < 0.001, "검: 기본 공격 +4%")
+	var dmy = m.dummy
+	var dmg_before: float = dmy.total_damage
+	p.gyeol = 100.0
+	p.wave_cd = 0.0
+	p.trait_cd = 0.0
+	p.attack_cd = 0.0
+	_teleport(dmy.position + Vector2(-130, 0))
+	await _dodge_toward(Vector2.RIGHT)
+	await _wait(0.3)
+	_check(m.stage == Main.Stage.Q4_UPGRADE and p.wave_cd > 0.0, "회피 직후 첫 공격 → 줄비 파동")
+	_check(p.trait_cd > 0.0 and absf(p.gyeol - (100.0 - 15.0 + 3.0)) < 2.5, "파동 결력 15, 물길 장도 특성 결력 +3")
+	_check(dmy.total_damage - dmg_before >= p.WAVE_DMG * 1.35, "파동이 정면의 허수아비에 피해")
+
+	# 강화 재료 부족 → 도겸에게 퀘스트 재료 재지급 → +1
+	_teleport(Main.BENCH_MILL + Vector2(0, -26))
+	await _interact(m.bench_mill)
+	var row: Dictionary = m.hud.craft_rows[0] if m.hud.craft_open() else {}
+	_check(not row.is_empty() and row["id"] == "upgrade" and not row["can"], "공구대: 하천광이 모자라 강화 불가 표시")
+	m.hud.close_craft()
+	_teleport(m.dogyeom.position + Vector2(0, 26))
+	await _interact(m.dogyeom)
+	_check(GameState.count("하천광") >= 2 and int(GameState.flags.get("q4_resupply", 0)) == 1, "도겸이 이번 단계에 필요한 재료만 재지급")
+	_teleport(Main.BENCH_MILL + Vector2(0, -26))
+	await _interact(m.bench_mill)
+	m._on_craft("upgrade")
+	m.hud.skip_dialogue()
+	_check(GameState.weapon_label() == "물길 장도 +1" and absf(GameState.weapon_multiplier() - 1.35 * 1.08) < 0.001, "물길 장도 +1 확정 강화")
+	_check(m.stage == Main.Stage.Q4_DONE and GameState.level == 5 and GameState.count("하천광") == 3 and m.world.hatch_open, "Q4 보상: Lv.5, 다음 강화 재료, Q5 입구 열림")
+	var cur_after: int = GameState.currency
+	m._complete_q4()
+	m.hud.skip_dialogue()
+	_check(GameState.count("하천광") == 3 and GameState.currency == cur_after, "Q4 보상은 한 번만 지급")
+
+	# 다시 도톰으로: 검 효과가 남지 않는다
+	m._on_portrait_long()
+	await _settle()
+	_check(GameState.active_spirit == "도톰" and p.gear == "" and j.state == Julbi.State.RESTING and d.visible, "도톰으로 교체하면 줄비 검 효과 해제")
+
+
+func _test_hud() -> void:
+	var h = m.hud
+	_check(h._quest_rect().end.y <= 180.0, "상시 정보(상태+목표)가 상단 180px 이내 (%.0f)" % h._quest_rect().end.y)
+	# 터치 영역: 최소 48dp(약 96px) 지름, 서로 겹치지 않음
+	var buttons := {"dodge": [h._dodge_c(), 82.0], "skill": [h._skill_c(), 64.0], "guard": [h._guard_c(), 60.0], "portrait": [h._portrait_c(), 58.0], "interact": [h._interact_c(), 66.0]}
+	var min_ok := true
+	for k in buttons:
+		if float(buttons[k][1]) * 2.0 < 96.0:
+			min_ok = false
+	_check(min_ok, "버튼 입력 지름 96px 이상")
+	var overlap := ""
+	var keys := buttons.keys()
+	for a in keys.size():
+		for b in range(a + 1, keys.size()):
+			var ka = keys[a]
+			var kb = keys[b]
+			if (buttons[ka][0] as Vector2).distance_to(buttons[kb][0]) < float(buttons[ka][1]) + float(buttons[kb][1]):
+				overlap += "%s-%s " % [ka, kb]
+	_check(overlap == "", "버튼 입력 영역끼리 겹치지 않음 %s" % overlap)
+
+	# 목표 줄을 누르면 펼치고, 다시 누르면 접힌다
+	var tap := InputEventScreenTouch.new()
+	tap.index = 5
+	tap.position = h._quest_rect().get_center()
+	tap.pressed = true
+	h._input(tap)
+	_check(h.info_open, "목표 줄을 누르면 정보 펼침")
+	h._input(tap)
+	_check(not h.info_open, "다시 누르면 접힘")
+
+	# 초상화: 짧게 = 전환, 길게 = 교체
+	var taps := [0, 0]
+	var c1 := func(): taps[0] += 1
+	var c2 := func(): taps[1] += 1
+	h.portrait_pressed.connect(c1)
+	h.portrait_long_pressed.connect(c2)
+	var down := InputEventScreenTouch.new()
+	down.index = 6
+	down.position = h._portrait_c()
+	down.pressed = true
+	var up := InputEventScreenTouch.new()
+	up.index = 6
+	up.position = h._portrait_c()
+	up.pressed = false
+	h._input(down)
+	h._input(up)
+	_check(taps[0] == 1 and taps[1] == 0, "초상화 짧게 누르기 → 동행/장비 전환 신호")
+	h._input(down)
+	await _wait(0.6)
+	h._input(up)
+	_check(taps[0] == 1 and taps[1] == 1, "초상화 길게 누르기 → 영물 교체 신호 (짧게 누르기 신호 없음)")
+	h.portrait_pressed.disconnect(c1)
+	h.portrait_long_pressed.disconnect(c2)
+	m._on_portrait()  # 위 짧게 누르기로 바뀐 상태를 되돌린다
+	m.spirit_switch_cd = 0.0
+
+	# 대사 창 높이는 글 길이에 맞춘다
+	var font := GameState.ui_font
+	var w: float = h._size().x - 96
+	var short_h := font.get_multiline_string_size("응.", HORIZONTAL_ALIGNMENT_LEFT, w, 28).y
+	var long_h := font.get_multiline_string_size("아주 긴 대사가 여러 줄로 이어질 때는 창이 그만큼 높아져야 하고, 짧은 대사는 작은 창으로 보여서 몸과 목적지를 덜 가린다.", HORIZONTAL_ALIGNMENT_LEFT, w, 28).y
+	_check(long_h > short_h * 1.8, "긴 대사는 여러 줄 (짧은 %.0f / 긴 %.0f)" % [short_h, long_h])
+
+func _to_q4() -> void:
+	await _to_q3()
+	_teleport(Main.GAP_START)
+	m.dotom.position = Main.GAP_START + Vector2(-20, 10)
+	await _wait_until(func(): return m.stage == Main.Stage.Q3_TRANSFORM, 4.0)
+	m._on_portrait()
+	_teleport(Vector2(850, 90))
+	await _settle()
+	_teleport(World.HANDLE_POS + Vector2(-20, 20))
+	await _interact(m.handle_spot)
+	m._on_portrait()
+	_teleport(m.dogyeom.position + Vector2(0, 26))
+	await _interact(m.dogyeom)
+	m.hud.toasts.clear()
+	m.hud.clear_hint()

@@ -40,6 +40,11 @@ const SAFE_BANK := Rect2(384, 330, 150, 110)
 const ISLAND := Rect2(872, 316, 200, 400)
 const NEST_POS := Vector2(985, 520)
 const HANDLE_POS := Vector2(1030, 100)
+## Q4: 갈대둑 방앗간 (늪 남동쪽). 앞방 입구는 북쪽, 물레방아는 남쪽 물길.
+const MILL := Rect2(860, 1300, 190, 100)
+const MILL_WATER := Rect2(760, 1400, 312, 56)
+const MILL_WHEEL := Vector2(1000, 1404)
+const HATCH := Rect2(800, 1332, 40, 40)  ## Q5 입구 (방앗간 아래)
 
 ## 퀘스트로 열고 닫는 벽: id → Rect2
 const REMOVABLE := {
@@ -64,6 +69,7 @@ var goal = null  ## 위치 목표 표시 (Vector2 또는 null)
 var anchor_built := false
 var gap_fixed := false
 var leaf_marks: Array[Vector2] = []
+var hatch_open := false
 
 ## 약한 발판. 오래 서 있으면(delay초) 무너진다. hidden 발판은 도톰이 동행일 때만 구분된다.
 var weak_planks: Array = [
@@ -84,7 +90,7 @@ var _pebbles: PackedVector2Array = []
 func _ready() -> void:
 	var blockers: Array[Rect2] = [
 		Rect2(0, 0, 16, H), Rect2(W - 16, 0, 16, H), Rect2(0, 0, W, 16), Rect2(0, H - 16, W, 16),
-		GATE, EAST_FOREST, DIVIDER, WALKWAY_RAIL,
+		GATE, EAST_FOREST, DIVIDER, WALKWAY_RAIL, MILL, MILL_WATER,
 	]
 	blockers.append_array(HOUSES)
 	blockers.append_array(FENCES)
@@ -410,6 +416,7 @@ func _draw_east(water_col: Color) -> void:
 
 	for i in range(5, REEDS.size()):
 		_draw_reeds(REEDS[i])
+	_draw_mill(water_col, flow)
 
 	for p in leaf_marks:
 		var b := sin(t * 3.0) * 1.5
@@ -463,3 +470,34 @@ func _draw_south_margin() -> void:
 	for i in 6:
 		draw_circle(Vector2(30 + i * 60, H + 160), 12.0, Color("5e7a48"))
 		draw_circle(Vector2(30 + i * 60, H + 156), 4.0, Color("d2ad62"))
+
+func _draw_mill(water_col: Color, flow: float) -> void:
+	_draw_water(MILL_WATER, water_col, flow)
+	# 물레방아
+	var spin := t * (0.4 + (1.0 - backflow) * 0.8)
+	draw_circle(MILL_WHEEL, 26.0, Color("5a4028"))
+	draw_circle(MILL_WHEEL, 20.0, water_col)
+	for i in 8:
+		var d := Vector2.RIGHT.rotated(spin + i * TAU / 8.0)
+		draw_line(MILL_WHEEL, MILL_WHEEL + d * 26.0, Color("6a4e34"), 3.0)
+	# 건물: 석조 아래층 + 목재 지붕
+	draw_rect(MILL, Color("8d8b80"))
+	for y in range(int(MILL.position.y) + 12, int(MILL.end.y), 14):
+		draw_line(Vector2(MILL.position.x, y), Vector2(MILL.end.x, y), Color("6e6c62"), 1.0)
+	draw_rect(Rect2(MILL.position.x - 6, MILL.position.y - 18, MILL.size.x + 12, 46), Color("6a4a3a"))
+	draw_rect(Rect2(MILL.position.x - 6, MILL.position.y - 18, MILL.size.x + 12, 8), Color("7a5a48"))
+	# 앞방 문과 황동 램프
+	var door := Rect2(MILL.get_center().x - 16, MILL.position.y + 30, 32, 40)
+	draw_rect(door, Color("3a2818"))
+	draw_circle(Vector2(door.end.x + 10, door.position.y + 6), 4.0, Color("f2d28b"))
+	draw_circle(Vector2(door.end.x + 10, door.position.y + 6), 8.0, Color(0.95, 0.82, 0.55, 0.18))
+	# Q5 입구: 방앗간 아래로 내려가는 덮개
+	if hatch_open:
+		draw_rect(HATCH, Color("1a1410"))
+		for i in 4:
+			draw_rect(Rect2(HATCH.position.x + 4, HATCH.position.y + 4 + i * 9, HATCH.size.x - 8, 4), Color("6e6c62"))
+		draw_rect(HATCH, Color("d2ad62"), false, 2.0)
+	else:
+		draw_rect(HATCH, Color("5a4028"))
+		draw_line(HATCH.position + Vector2(0, 20), HATCH.position + Vector2(40, 20), Color("3a2818"), 2.0)
+		draw_circle(HATCH.get_center(), 4.0, Color("6a6a70"))

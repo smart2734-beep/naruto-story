@@ -3,6 +3,7 @@ extends Node2D
 ##   Q1 「물보다 먼저 도착해야」 — 이음터 → 갈대둑, 부품 전달
 ##   Q2 「젖은 둑의 작은 발」   — 느슨한 줄 조사, 고정점 설치, 도톰 계약
 ##   Q3 「마지막 한 걸음」      — 도톰 동행 탐지 → 신발 변신 → 틈 건너기 → 압력 해제
+##   Q4 「방앗간의 헐거운 이음」 — 도안 제출·물길 장도 제작 → 줄비 임시 동행·연결쇠 → 손잡이 수선·계약 → 검 변신 → +1 강화
 ## 실행 인자 (Godot 실행 시 `--` 뒤에 붙임):
 ##   --autotest           전체 흐름을 자동 점검하고 종료 (성공 0 / 실패 1)
 ##   --shot=경로.png       장면을 캡처하고 종료.  --scenario=이름 과 함께 사용 (devtools.gd 참고)
@@ -13,6 +14,9 @@ const Ironbeak := preload("res://scripts/enemy_ironbeak.gd")
 const Beetle := preload("res://scripts/enemy_beetle.gd")
 const Patrol := preload("res://scripts/enemy_patrol.gd")
 const Dotom := preload("res://scripts/spirit_dotom.gd")
+const Julbi := preload("res://scripts/spirit_julbi.gd")
+const Dummy := preload("res://scripts/enemy_dummy.gd")
+const FxWave := preload("res://scripts/fx_wave.gd")
 const Interactable := preload("res://scripts/interactable.gd")
 const Hud := preload("res://scripts/hud.gd")
 const FloatText := preload("res://scripts/float_text.gd")
@@ -21,7 +25,9 @@ const DevTools := preload("res://scripts/devtools.gd")
 enum Stage {
 	TALK_DANU, GET_CRATE, GO_ENTRANCE, CROSS, BACKFLOW, TALK_MAEDEUP,
 	Q2_GO_BANK, Q2_ROPES, Q2_GET_ROPE, Q2_ANCHOR, Q2_CALM, Q2_FOLLOW, Q2_CONTRACT,
-	Q3_TALK_HAON, Q3_FIND, Q3_TRANSFORM, Q3_GAP, Q3_HANDLE, Q3_DONE,
+	Q3_TALK_HAON, Q3_FIND, Q3_TRANSFORM, Q3_GAP, Q3_HANDLE,
+	Q3_DONE,  # = Q4 시작: 도겸에게 고리 보여주기
+	Q4_CRAFT, Q4_GO_MILL, Q4_SWAP, Q4_UNHOOK, Q4_REPAIR, Q4_BLADE, Q4_UPGRADE, Q4_DONE,
 }
 
 const VILLAGE_START := Vector2(192, 1850)
@@ -37,7 +43,16 @@ const MAP_SIZE := Vector2(World.W, World.H)
 const Q1_TITLE := "Q1. 물보다 먼저 도착해야"
 const Q2_TITLE := "Q2. 젖은 둑의 작은 발"
 const Q3_TITLE := "Q3. 마지막 한 걸음"
-const XP := {"ironbeak": 15, "beetle": 20, "patrol": 30}
+const Q4_TITLE := "Q4. 방앗간의 헐거운 이음"
+const DOGYEOM_VILLAGE := Vector2(300, 1622)
+const DOGYEOM_MILL := Vector2(880, 1236)
+const BENCH_VILLAGE := Vector2(352, 1652)
+const BENCH_MILL := Vector2(836, 1262)
+const RING_POS := Vector2(955, 1290)
+const HOOK_POS: Array[Vector2] = [Vector2(885, 1290), Vector2(1025, 1290)]
+const JULBI_HOME := Vector2(1000, 1240)
+const DUMMY_POS := Vector2(910, 1196)
+const XP := {"ironbeak": 15, "beetle": 20, "patrol": 30, "dummy": 0}
 ## 상단 HUD에 가리지 않도록 플레이어를 화면 중앙보다 조금 아래에 둔다.
 const CAMERA_LOOK_AHEAD := Vector2(0, -36)
 ## 영물 변신 (기획서 6장 규칙 5): 전투 중 2초 준비·피격 시 취소·성공 후 10초 대기.
@@ -56,17 +71,33 @@ var crate
 var haon
 var maedeup
 var dotom
+var julbi
+var spirit_nodes: Dictionary = {}
 var ropes: Array = []
 var anchor_spot
 var handle_spot
+var dogyeom
+var bench_village
+var bench_mill
+var ring_spot
+var hooks: Array = []
+var dummy
 var enemies: Array = []
 
 var stage: Stage = Stage.TALK_DANU
 var current_interact = null
 var shake := 0.0
 var moved_distance := 0.0
-var spirit_switch_cd := 0.0
-var _pending_shoe := false
+## 전투 변신 뒤 전환 대기시간은 영물마다 따로 센다 (기획서 6장 규칙 5: "해당 영물에").
+var _switch_cd: Dictionary = {}
+var spirit_switch_cd: float:
+	get:
+		return float(_switch_cd.get(GameState.active_spirit, 0.0))
+	set(v):
+		_switch_cd[GameState.active_spirit] = v
+var _pending_gear := ""  ## 변신이 끝나면 적용할 장비 상태 ("" = 동행으로)
+var _pending_spirit := ""  ## 변신을 시작한 영물. 결과와 대기시간은 이 영물에만 적용한다.
+var _hook_marking := false
 var _transform_in_combat := false
 var _last_player_pos := Vector2.ZERO
 var _once: Dictionary = {}
@@ -97,6 +128,26 @@ func _ready() -> void:
 	handle_spot.action_label = "돌리기"
 	handle_spot.interactable = false
 
+	# Q4: 마을 작업장과 방앗간
+	dogyeom = _make_npc("장인 도겸", DOGYEOM_VILLAGE, Color("5a5048"), Color("c8a050"), Color("3a3030"))
+	bench_village = _make_npc("작업대", BENCH_VILLAGE, Color.WHITE, Color.WHITE, Color.WHITE)
+	bench_village.kind = "bench"
+	bench_village.action_label = "작업"
+	bench_mill = _make_npc("공구대", BENCH_MILL, Color.WHITE, Color.WHITE, Color.WHITE)
+	bench_mill.kind = "bench"
+	bench_mill.action_label = "작업"
+	_set_present(bench_mill, false)
+	ring_spot = _make_npc("걸린 고리", RING_POS, Color.WHITE, Color.WHITE, Color.WHITE)
+	ring_spot.kind = "spot"
+	ring_spot.action_label = "조사"
+	ring_spot.interactable = false
+	for p in HOOK_POS:
+		var h = _make_npc("연결쇠", p, Color.WHITE, Color.WHITE, Color.WHITE)
+		h.kind = "hook"
+		h.action_label = "풀기"
+		h.interactable = false
+		hooks.append(h)
+
 	dotom = Dotom.new()
 	dotom.position = World.NEST_POS
 	add_child(dotom)
@@ -104,6 +155,11 @@ func _ready() -> void:
 	dotom.trusted.connect(_on_dotom_trusted)
 	dotom.arrived.connect(_on_dotom_arrived)
 	dotom.marked.connect(_on_dotom_marked)
+	julbi = Julbi.new()
+	julbi.position = JULBI_HOME
+	add_child(julbi)
+	julbi.marked.connect(_on_julbi_marked)
+	spirit_nodes = {"도톰": dotom, "줄비": julbi}
 
 	for home in [Vector2(200, 1080), Vector2(170, 720)]:
 		_add_enemy(Ironbeak.new(), home, "ironbeak")
@@ -113,6 +169,8 @@ func _ready() -> void:
 	patrol.min_x = 850.0
 	patrol.max_x = 1000.0
 	_add_enemy(patrol, Vector2(900, 100), "patrol")
+	dummy = Dummy.new()
+	_add_enemy(dummy, DUMMY_POS, "dummy")
 
 	player = Player.new()
 	player.position = VILLAGE_START
@@ -125,10 +183,13 @@ func _ready() -> void:
 	player.guard_success.connect(_on_guard_success)
 	player.transform_done.connect(_on_transform_done)
 	player.transform_cancelled.connect(_on_transform_cancelled)
+	player.wave_fired.connect(_on_wave_fired)
+	player.trait_triggered.connect(_on_trait_triggered)
 	_last_player_pos = player.position
 	for e in enemies:
 		e.player = player
 	dotom.player = player
+	julbi.player = player
 
 	camera = Camera2D.new()
 	camera.limit_left = 0
@@ -147,6 +208,8 @@ func _ready() -> void:
 	hud.player = player
 	hud.interact_pressed.connect(func(): _on_interact(current_interact))
 	hud.portrait_pressed.connect(_on_portrait)
+	hud.portrait_long_pressed.connect(_on_portrait_long)
+	hud.craft_picked.connect(_on_craft)
 
 	_enter_stage(Stage.TALK_DANU)
 	hud.show_hint("왼쪽 아래를 누른 채 끌어서 이동하세요")
@@ -208,7 +271,7 @@ func _first(id: String) -> bool:
 
 func _enter_stage(s: Stage) -> void:
 	stage = s
-	for n in [danu, crate, haon, maedeup, anchor_spot, handle_spot]:
+	for n in [danu, crate, haon, maedeup, anchor_spot, handle_spot, dogyeom, bench_village, bench_mill, ring_spot]:
 		n.marked = false
 	for r in ropes:
 		r.marked = false
@@ -262,7 +325,7 @@ func _enter_stage(s: Stage) -> void:
 			hud.set_objective(Q3_TITLE, "도톰과 함께 끊긴 틈 앞으로 (동행 상태)", GAP_START)
 		Stage.Q3_TRANSFORM:
 			hud.set_objective(Q3_TITLE, "초상화를 눌러 도톰을 신발로", null)
-			hud.show_hint("왼쪽의 도톰 초상화를 누르면 신발로 변해요")
+			hud.show_hint("아래쪽 도톰 초상화를 누르면 신발로 변해요")
 		Stage.Q3_GAP:
 			hud.set_objective(Q3_TITLE, "틈 가장자리에서 잎 표시 쪽으로 회피", World.SAFE_LANDING.get_center())
 			hud.show_hint("틈 끝에 붙어서 잎 쪽으로 [회피]! 신발이 한 걸음 더 내딛어요")
@@ -272,7 +335,34 @@ func _enter_stage(s: Stage) -> void:
 			hud.set_objective(Q3_TITLE, "순찰기를 피해 압력 손잡이 돌리기", World.HANDLE_POS)
 			hud.show_hint("순찰기는 바라보는 방향으로만 쏴요. 뒤나 옆으로 돌아가세요", 4.5)
 		Stage.Q3_DONE:
-			hud.set_objective("Q4. 방앗간의 헐거운 이음", "다음 빌드에서 이어집니다 (도겸의 작업장)", null)
+			dogyeom.marked = true
+			hud.set_objective(Q4_TITLE, "마을 작업장의 도겸에게 고리 보여주기", dogyeom.position)
+		Stage.Q4_CRAFT:
+			bench_village.marked = true
+			hud.set_objective(Q4_TITLE, "작업대에서 물길 장도 제작", bench_village.position)
+		Stage.Q4_GO_MILL:
+			ring_spot.interactable = true
+			ring_spot.marked = true
+			hud.set_objective(Q4_TITLE, "갈대둑 방앗간 앞방의 걸린 고리 조사", RING_POS)
+		Stage.Q4_SWAP:
+			hud.set_objective(Q4_TITLE, "도톰을 쉬게 하고 줄비와 함께하기", null)
+			hud.show_hint("영물 초상화를 길게 누르면 활성 영물을 바꿔요 (PC: T)")
+		Stage.Q4_UNHOOK:
+			hud.set_objective(Q4_TITLE, "줄비가 표시한 연결쇠 풀기 (%d/2)" % _hooks_done(), RING_POS)
+		Stage.Q4_REPAIR:
+			ring_spot.interactable = true
+			ring_spot.marked = true
+			ring_spot.display_name = "앞방 손잡이"
+			ring_spot.action_label = "수선"
+			hud.set_objective(Q4_TITLE, "도겸과 안전한 손잡이 수선 (무료)", RING_POS)
+		Stage.Q4_BLADE:
+			hud.set_objective(Q4_TITLE, "줄비를 검으로 — 회피 직후 허수아비 공격", DUMMY_POS)
+			hud.show_hint("초상화를 눌러 줄비를 검으로. 회피한 뒤 2초 안에 공격하면 파동이 나가요")
+		Stage.Q4_UPGRADE:
+			bench_mill.marked = true
+			hud.set_objective(Q4_TITLE, "공구대에서 장도 +1 강화", BENCH_MILL)
+		Stage.Q4_DONE:
+			hud.set_objective("Q5. 물을 돌려놓는 손", "다음 빌드에서 이어집니다 (방앗간 아래)", null)
 
 
 func _update_rope_objective() -> void:
@@ -294,7 +384,8 @@ func _process(delta: float) -> void:
 	player.locked = hud.dialogue_active()
 	moved_distance += player.position.distance_to(_last_player_pos)
 	_last_player_pos = player.position
-	spirit_switch_cd = maxf(spirit_switch_cd - delta, 0.0)
+	for k in _switch_cd:
+		_switch_cd[k] = maxf(float(_switch_cd[k]) - delta, 0.0)
 	hud.spirit_cd = spirit_switch_cd / TRANSFORM_COMBAT_CD
 
 	if not player.falling and not player.dead and world.update_weak(player.position, delta, player.airborne()):
@@ -320,6 +411,8 @@ func _process(delta: float) -> void:
 		Stage.Q3_GAP:
 			if player.position.x > World.SAFE_LANDING.end.x and player.position.y < 170.0 and not player.falling:
 				_enter_stage(Stage.Q3_HANDLE)
+		Stage.Q4_UNHOOK:
+			_check_hooks()
 
 	# 가장 가까운 상호작용 대상
 	current_interact = null
@@ -378,6 +471,17 @@ func _on_interact(n) -> void:
 	elif n == handle_spot:
 		if stage == Stage.Q3_HANDLE:
 			_turn_handle()
+	elif n == dogyeom:
+		_talk_dogyeom()
+	elif n == bench_village or n == bench_mill:
+		_open_bench(n)
+	elif n == ring_spot:
+		if stage == Stage.Q4_GO_MILL:
+			_inspect_ring()
+		elif stage == Stage.Q4_REPAIR:
+			_repair_handle()
+	elif hooks.has(n):
+		_unhook(n)
 
 
 func _talk_danu() -> void:
@@ -395,6 +499,8 @@ func _talk_danu() -> void:
 		hud.start_dialogue([["단우", "서두를 필요 없어. 다치지 말고 도착만 해."]])
 	elif stage < Stage.Q2_CONTRACT:
 		hud.start_dialogue([["단우", "수문이 역류했다고? …매듭을 도와줘. 네 손이 필요할 거야."]])
+	elif stage == Stage.Q4_DONE:
+		hud.start_dialogue([["단우", "방앗간 아래라고? 정비기가 있는 곳이야. 준비되면 같이 내려가자. (다음 빌드에서 이어집니다)"]])
 	else:
 		hud.start_dialogue([["단우", "영물과 계약했다고? 잘했어. 약속은 지키는 쪽이 먼저 지치지 않게 하는 거야."]])
 
@@ -552,7 +658,6 @@ func _complete_q2() -> void:
 	dotom.nest_pos = World.SAFE_BANK.get_center() + Vector2(-30, 10)
 	dotom.nest_at_home = true
 	dotom.become_companion()
-	hud.spirit_form = "동행"
 	if GameState.claim_reward("Q2"):
 		GameState.contract_spirit("도톰")
 		var gained := GameState.xp_to_level(3)
@@ -562,6 +667,7 @@ func _complete_q2() -> void:
 		if gained > 0:
 			hud.toast("레벨 업! Lv.%d" % GameState.level)
 		hud.toast("수초섬유 +3")
+	_refresh_spirit_hud()
 	hud.show_hint("도톰은 동행할 때 숨은 발판을 찾아줘요. 북쪽 점검로로 가 봐요", 4.5)
 	dotom.alert()
 	world.set_blocker("steps_barrier", false)
@@ -577,14 +683,41 @@ func _on_dotom_marked() -> void:
 		_enter_stage(Stage.Q3_TRANSFORM)
 
 
+# ── 영물 공통: 활성 1칸, 동행 ↔ 장비 ─────────────────────
+
+func active_node():
+	return spirit_nodes.get(GameState.active_spirit)
+
+
+func _gear_name(id: String) -> String:
+	return "신발" if id == "도톰" else "검"
+
+
+func _refresh_spirit_hud() -> void:
+	var id := GameState.active_spirit
+	hud.spirit_name = id
+	hud.spirit_form = _gear_name(id) if id != "" and player.gear == id else ("동행" if id != "" else "")
+	hud.spirit_can_swap = GameState.available_spirits().size() >= 2
+
+
+## 초상화 누르기: 활성 영물의 동행 ↔ 장비 전환.
 func _on_portrait() -> void:
-	if not GameState.spirits.has("도톰") or player.transform_t > 0.0 or spirit_switch_cd > 0.0:
+	var id := GameState.active_spirit
+	var node = active_node()
+	if node == null or player.transform_t > 0.0:
+		return
+	if spirit_switch_cd > 0.0:
+		hud.toast("%s 전환 대기 %d초" % [id, ceili(spirit_switch_cd)])
 		return
 	if hud.dialogue_active() or player.dead or player.falling:
 		return
-	if dotom.state == Dotom.State.MARKING:
+	if not GameState.spirits.has(id):
+		hud.toast("%s와는 아직 계약 전이라 변신할 수 없어요" % id)
 		return
-	_pending_shoe = not player.shoe
+	if (node == dotom and dotom.state == Dotom.State.MARKING) or (node == julbi and julbi.state == Julbi.State.MARKING):
+		return
+	_pending_gear = "" if player.gear == id else id
+	_pending_spirit = id
 	_transform_in_combat = _in_combat()
 	if _transform_in_combat:
 		hud.toast("변신 준비 2초 — 맞으면 끊겨요")
@@ -596,29 +729,66 @@ func _on_portrait() -> void:
 
 func _in_combat() -> bool:
 	for e in enemies:
-		if is_instance_valid(e) and e.alive and e.position.distance_to(player.position) < COMBAT_RADIUS:
+		if is_instance_valid(e) and e.alive and e.get_meta("kind") != "dummy" and e.position.distance_to(player.position) < COMBAT_RADIUS:
 			return true
 	return false
 
 
 ## 한 영물은 동행 또는 장비 중 한 상태만 가진다 (기획서 6장 규칙 3).
-## 신발이면 dotom 노드가 숨고 동행 탐지·경고가 멈추며, 동행이면 player.shoe가 꺼져 추가 한 걸음·이동속도 보너스가 없다.
+## 장비면 영물 노드가 숨어 동행 탐지·보조가 멈추고, 동행이면 player.gear가 비어 신발·검 효과가 없다.
 func _on_transform_done() -> void:
+	var id := _pending_spirit
+	if id != GameState.active_spirit:
+		return  # 준비 중에 활성 영물이 바뀌었다 → 무효
 	if _transform_in_combat:
-		spirit_switch_cd = TRANSFORM_COMBAT_CD
+		_switch_cd[id] = TRANSFORM_COMBAT_CD
 		_transform_in_combat = false
-	if _pending_shoe:
-		dotom.equip()
-		player.shoe = true
-		hud.spirit_form = "신발"
-		if _first("first_shoe"):
+	var node = active_node()
+	if _pending_gear != "":
+		node.equip()
+		player.gear = id
+		if id == "도톰" and _first("first_shoe"):
 			hud.toast("도톰이 신발 무늬가 되었다 — 회피 끝에 한 걸음 더")
-		if stage == Stage.Q3_TRANSFORM:
+		elif id == "줄비" and _first("first_blade"):
+			hud.toast("줄비가 겹날이 되었다 — 회피 직후 공격에 파동")
+		if stage == Stage.Q3_TRANSFORM and id == "도톰":
 			_enter_stage(Stage.Q3_GAP)
 	else:
-		player.shoe = false
-		dotom.become_companion()
-		hud.spirit_form = "동행"
+		player.gear = ""
+		node.become_companion()
+	_refresh_spirit_hud()
+
+
+## 초상화 길게 누르기: 활성 영물 교체. 쉬는 영물은 숙소로 가고 전투 보너스가 없다. 전투 중에는 불가.
+func _on_portrait_long() -> void:
+	var avail := GameState.available_spirits()
+	if avail.size() < 2 or player.transform_t > 0.0 or hud.dialogue_active():
+		return
+	if _in_combat():
+		hud.toast("전투 중에는 영물을 바꿀 수 없어요")
+		return
+	var cur := GameState.active_spirit
+	set_active_spirit(avail[(avail.find(cur) + 1) % avail.size()])
+
+
+func set_active_spirit(id: String) -> void:
+	var old := GameState.active_spirit
+	if old == id:
+		return
+	if player.transform_t > 0.0:
+		player.transform_t = 0.0  # 교체하면 진행 중인 변신 준비는 취소
+		_transform_in_combat = false
+	if old != "":
+		if player.gear == old:
+			player.gear = ""
+		spirit_nodes[old].rest()
+	GameState.active_spirit = id
+	spirit_nodes[id].become_companion()
+	_refresh_spirit_hud()
+	hud.toast("%s와 함께 · %s는 숙소에서 쉼" % [id, old])
+	if stage == Stage.Q4_SWAP and id == "줄비":
+		hud.clear_hint()
+		_enter_stage(Stage.Q4_UNHOOK)
 
 
 func _on_transform_cancelled() -> void:
@@ -657,6 +827,235 @@ func _turn_handle() -> void:
 	], func():
 		hud.show_hint("되받기: 맞기 직전에 누르면 막고 반격해요 (결력 12)", 5.0)
 		_enter_stage(Stage.Q3_DONE))
+
+
+# ── Q4 ───────────────────────────────────────────────────
+
+func _talk_dogyeom() -> void:
+	match stage:
+		Stage.Q3_DONE:
+			hud.start_dialogue([
+				["도겸", "수문에서 나온 고리라고? …보여 줘 봐."],
+				["도겸", "공방 납품 규격이 아니야. 누군가 정상 부품 위에 덧씌웠군."],
+				["도겸", "잘 만든 도구는 힘을 더하지. 나쁜 고리는 누구의 힘인지부터 빼앗고."],
+				["도겸", "하온이 준 물길 장도 도안 있지? 작업장에 등록하면 조합 지원금이 나와. 그걸로 네 장도부터 제대로 만들어."],
+			], _grant_q4_support)
+		Stage.Q4_CRAFT, Stage.Q4_UPGRADE:
+			if _q4_resupply():
+				return
+			hud.start_dialogue([["도겸", "작업대에서 하면 돼. 재료가 모자라면 나한테 말하고."]])
+		Stage.Q4_GO_MILL, Stage.Q4_SWAP, Stage.Q4_UNHOOK:
+			hud.start_dialogue([["도겸", "방앗간 앞방 고리부터 봐 줘. 줄비가 그 근처에 살아."]])
+		Stage.Q4_REPAIR, Stage.Q4_BLADE:
+			hud.start_dialogue([["도겸", "줄비랑 손발 맞춰 봐. 허수아비는 마음껏 쳐도 돼."]])
+		Stage.Q4_DONE:
+			hud.start_dialogue([["도겸", "방앗간 아래는 정비기 구역이야. 단우랑 같이 가."]])
+		_:
+			hud.start_dialogue([["도겸", "작업장은 정리 중이야. 고칠 게 생기면 가져와."]])
+
+
+## 도안 제출: 지원금 50 + 하천광 2, 물길 장도 제작법 등록. 한 번만 지급한다.
+func _grant_q4_support() -> void:
+	if GameState.claim_reward("Q4_support"):
+		GameState.add_item("물길 장도 도안", -1)
+		GameState.known_recipes.append("물길 장도")
+		GameState.add_currency(50)
+		GameState.add_item("하천광", 2)
+		hud.toast("도안 등록: 물길 장도")
+		hud.toast("제작 지원금 +50 · 하천광 +2")
+	_enter_stage(Stage.Q4_CRAFT)
+
+
+## 퀘스트 재료를 다른 제작에 써 버렸을 때, 지금 단계에 필요한 만큼만 다시 받는다 (기획서 Q4 실패 조건).
+func _q4_resupply() -> bool:
+	var cost: Dictionary = {}
+	if stage == Stage.Q4_CRAFT and GameState.weapon != "물길 장도":
+		cost = GameState.RECIPES["물길 장도"]
+	elif stage == Stage.Q4_UPGRADE and GameState.weapon_plus < 1:
+		cost = GameState.next_upgrade_cost()
+	if cost.is_empty() or GameState.can_pay(cost):
+		return false
+	var given: Array[String] = []
+	for k in cost:
+		var missing: int = int(cost[k]) - GameState.count(k)
+		if missing > 0:
+			if k == "재화":
+				GameState.add_currency(missing)
+			else:
+				GameState.add_item(k, missing)
+			given.append("%s %d" % [k, missing])
+	GameState.set_flag("q4_resupply", int(GameState.flags.get("q4_resupply", 0)) + 1)
+	hud.start_dialogue([["도겸", "재료를 다른 데 썼구나. 괜찮아, 이번 일에 필요한 만큼은 조합에서 내줄게. (%s)" % ", ".join(given)]])
+	return true
+
+
+func _open_bench(n) -> void:
+	var rows := _craft_rows()
+	if rows.is_empty():
+		hud.toast("지금 만들거나 강화할 수 있는 것이 없어요")
+		return
+	hud.open_craft("작업대 — 이음터 작업장" if n == bench_village else "방앗간 공구대", rows)
+
+
+func _cost_row(id: String, title: String, desc: String, cost: Dictionary, button: String) -> Dictionary:
+	var lines: Array = []
+	for k in cost:
+		lines.append([k, GameState.count(k), int(cost[k])])
+	return {"id": id, "title": title, "desc": desc, "cost": lines, "button": button, "can": GameState.can_pay(cost)}
+
+
+func _craft_rows() -> Array:
+	var rows: Array = []
+	if GameState.known_recipes.has("물길 장도") and GameState.weapon != "물길 장도":
+		rows.append(_cost_row("craft:물길 장도", "물길 장도 제작", "기본 성능 ×1.35 · 회피 직후 공격 시 결력 3 회복", GameState.RECIPES["물길 장도"], "제작"))
+	if GameState.weapon != "연습용 목도" and GameState.weapon_plus < GameState.MAX_PLUS:
+		rows.append(_cost_row("upgrade", "%s → +%d 강화" % [GameState.weapon, GameState.weapon_plus + 1], "성능 +8% · 실패·파괴 없는 확정 강화", GameState.next_upgrade_cost(), "강화"))
+	return rows
+
+
+func _on_craft(id: String) -> void:
+	if id.begins_with("craft:"):
+		var w := id.substr(6)
+		if not GameState.craft_weapon(w):
+			return
+		hud.toast("%s 제작 완료!" % w)
+		if stage == Stage.Q4_CRAFT:
+			hud.close_craft()
+			hud.start_dialogue([
+				["도겸", "손에 맞지? 회피하고 바로 베면 숨이 조금 돌아올 거야."],
+				["도겸", "이제 방앗간 앞방에 걸린 고리를 봐 줘. 거기 사는 줄비가 요즘 예민해."],
+			], func(): _enter_stage(Stage.Q4_GO_MILL))
+			return
+	elif id == "upgrade":
+		if not GameState.upgrade_weapon():
+			return
+		hud.toast("%s 강화 성공!" % GameState.weapon_label())
+		if stage == Stage.Q4_UPGRADE and GameState.weapon == "물길 장도" and GameState.weapon_plus >= 1:
+			hud.close_craft()
+			_complete_q4()
+			return
+	var rows := _craft_rows()
+	if rows.is_empty():
+		hud.close_craft()
+	else:
+		hud.craft_rows = rows
+
+
+func _inspect_ring() -> void:
+	ring_spot.interactable = false
+	hud.start_dialogue([
+		["조사", "앞방 문틀의 연결쇠마다 낯선 고리가 물려 있다. 억지로 당기면 문틀째 뜯겨 나갈 것 같다."],
+		["줄비", "(문틀 위에서 비늘을 접었다 펴며, 고리를 하나씩 꼬리로 가리킨다)"],
+		["줄비", "(그러다 네 곁의 도톰을 보고 머뭇거린다. 지금은 한 영물만 함께할 수 있다)"],
+	], func():
+		if not GameState.temp_spirits.has("줄비") and not GameState.spirits.has("줄비"):
+			GameState.temp_spirits.append("줄비")
+		_refresh_spirit_hud()
+		_enter_stage(Stage.Q4_SWAP))
+
+
+func _hooks_done() -> int:
+	var n := 0
+	for h in hooks:
+		if h.checked:
+			n += 1
+	return n
+
+
+## 줄비 동행 탐지: 방앗간 앞에서 아직 찾지 못한 연결쇠를 하나씩 표시한다. 검 상태면 찾지 않는다.
+func _check_hooks() -> void:
+	if _hook_marking or GameState.active_spirit != "줄비" or julbi.state != Julbi.State.COMPANION:
+		return
+	if player.position.distance_to(RING_POS) > 170.0:
+		return
+	for h in hooks:
+		if not h.interactable and not h.checked:
+			_hook_marking = true
+			julbi.run_mark(h.position + Vector2(0, -14))
+			return
+
+
+func _on_julbi_marked() -> void:
+	if not _hook_marking:
+		return
+	_hook_marking = false
+	for h in hooks:
+		if not h.interactable and not h.checked:
+			h.interactable = true
+			h.marked = true
+			hud.toast("줄비가 연결쇠를 찾았다 — 화살표 방향으로 풀기")
+			return
+
+
+func _unhook(h) -> void:
+	if stage != Stage.Q4_UNHOOK or h.checked:
+		return
+	h.checked = true
+	h.marked = false
+	h.interactable = false
+	hud.toast("연결쇠를 풀었다 (%d/2)" % _hooks_done())
+	if _hooks_done() >= hooks.size():
+		dogyeom.position = DOGYEOM_MILL
+		_set_present(bench_mill, true)
+		hud.start_dialogue([["도겸", "(뒤따라와서) 연결쇠가 다 풀렸네. 이제 제대로 된 손잡이를 달자. 이번 수선은 조합 일이니 값은 안 받아."]],
+			func(): _enter_stage(Stage.Q4_REPAIR))
+	else:
+		_enter_stage(Stage.Q4_UNHOOK)
+
+
+## 안전한 손잡이 수선(무료) → 줄비 계약.
+func _repair_handle() -> void:
+	ring_spot.interactable = false
+	hud.start_dialogue([
+		["조사", "(도겸이 고리를 떼어 내고 새 손잡이를 맞춘다. 줄비가 손잡이 끝을 꼬리로 감아 본다)"],
+		["도겸", "봐, 마음에 들어 하네. 남의 도구를 망가뜨리지 않는 손이란 걸 알아본 거야."],
+		["줄비", "(겹친 비늘을 펼쳐 네 장도 날 위에 살짝 올려 놓는다 — 계약의 표시다)"],
+	], func():
+		if GameState.claim_reward("Q4_contract"):
+			GameState.contract_spirit("줄비")
+			hud.toast("영물 계약: 줄비")
+		_refresh_spirit_hud()
+		_enter_stage(Stage.Q4_BLADE))
+
+
+func _on_wave_fired(origin: Vector2, dir: Vector2) -> void:
+	var fx = FxWave.new()
+	fx.position = origin
+	fx.dir = dir
+	fx.length = player.WAVE_LEN
+	fx.width = player.WAVE_WIDTH
+	add_child(fx)
+	if stage == Stage.Q4_BLADE:
+		hud.toast("줄비 파동! 회피 직후 첫 공격")
+		hud.clear_hint()
+		_enter_stage(Stage.Q4_UPGRADE)
+
+
+func _on_trait_triggered() -> void:
+	var ft = FloatText.new()
+	ft.text = "결력 +3"
+	ft.color = Color("5fc5c9")
+	ft.position = player.position + Vector2(0, -30)
+	add_child(ft)
+
+
+func _complete_q4() -> void:
+	if GameState.claim_reward("Q4"):
+		var gained := GameState.xp_to_level(5)
+		GameState.add_item("하천광", 3)
+		hud.toast(Q4_TITLE + " 완료")
+		if gained > 0:
+			hud.toast("레벨 업! Lv.%d" % GameState.level)
+		hud.toast("다음 강화 재료: 하천광 +3")
+	hud.start_dialogue([
+		["도겸", "확정 강화는 실패가 없어. 대신 재료가 정직하게 들지."],
+		["도겸", "활성 칸은 아직 하나야. 상황에 맞게 도톰이든 줄비든 골라서 데려가."],
+		["줄비", "(갑자기 물레방아 쪽으로 몸을 늘이더니, 고리에서 이어진 긴 연결선을 따라 바닥 덮개를 두드린다)"],
+		["도겸", "방앗간 아래로 이어진다고? …단우에게 알리자. 거긴 정비기가 있는 곳이야."],
+	], func():
+		world.hatch_open = true
+		hud.show_hint("초상화를 길게 누르면 도톰과 줄비를 바꿔 데려갈 수 있어요", 5.0)
+		_enter_stage(Stage.Q4_DONE))
 
 
 # ── 전투·사고 ─────────────────────────────────────────────
@@ -737,5 +1136,6 @@ func _on_player_fell() -> void:
 	world.reset_weak()
 	player.respawn(at, practice)
 	camera.reset_smoothing()
-	if dotom.state == Dotom.State.COMPANION:
-		dotom.position = at + Vector2(14, 6)
+	var node = active_node()
+	if node != null and node.visible:
+		node.position = at + Vector2(14, 6)

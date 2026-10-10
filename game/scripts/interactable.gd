@@ -46,6 +46,25 @@ func _draw() -> void:
 			var x := -2.0 + i * 3.5
 			pts.append(Vector2(x, -10 + sin(i / 8.0 * PI) * (6.0 + sag) + sin(t * 3.0 + i) * (1.0 if not checked else 0.0)))
 		draw_polyline(pts, Color("d8c090") if not checked else Color("8fdc5a"), 2.0)
+	elif kind == "bench":
+		# 작업대: 나무 상판, 조율봉, 황동 램프
+		draw_rect(Rect2(-14, -6, 28, 12), Color("75513a"))
+		draw_rect(Rect2(-14, -6, 28, 3), Color("8a6448"))
+		draw_rect(Rect2(-12, 6, 3, 6), Color("49352c"))
+		draw_rect(Rect2(9, 6, 3, 6), Color("49352c"))
+		draw_line(Vector2(-8, -9), Vector2(4, -7), Color("a2a58f"), 2.0)
+		draw_circle(Vector2(10, -10), 3.0, Color("f2d28b"))
+	elif kind == "hook":
+		# 걸린 연결쇠. 줄비가 찾기 전에는 보이지 않는다(interactable=false면 그리지 않음).
+		if interactable or checked:
+			var col := Color("8a8a90") if not checked else Color("7fd6c2")
+			draw_arc(Vector2(0, -4), 5.0, 0, TAU, 12, col, 2.0)
+			draw_line(Vector2(-6, 2), Vector2(6, 2), col, 2.0)
+			if not checked:
+				var a := sin(t * 6.0) * 2.0
+				draw_line(Vector2(9 + a, -4), Vector2(15 + a, -4), Color("5fc5c9"), 2.0)
+				draw_line(Vector2(15 + a, -4), Vector2(12 + a, -7), Color("5fc5c9"), 2.0)
+				draw_line(Vector2(15 + a, -4), Vector2(12 + a, -1), Color("5fc5c9"), 2.0)
 	elif kind == "spot":
 		pass  # 월드가 그리는 장치(손잡이 등)의 상호작용 지점
 	else:
@@ -55,7 +74,7 @@ func _draw() -> void:
 		draw_arc(Vector2(0, -8), 6.0, PI, TAU, 10, hair, 3.0)
 
 	var f := GameState.world_font
-	if display_name != "" and (kind != "spot" or interactable):
+	if display_name != "" and ((kind != "spot" and kind != "hook") or interactable):
 		draw_string_outline(f, Vector2(-40, -18), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, 3, Color(0, 0, 0, 0.7))
 		draw_string(f, Vector2(-40, -18), display_name, HORIZONTAL_ALIGNMENT_CENTER, 80, 8, Color.WHITE)
 	if marked:

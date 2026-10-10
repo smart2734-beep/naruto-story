@@ -10,6 +10,8 @@ signal extra_step_used
 signal guard_success
 signal transform_done
 signal transform_cancelled
+signal wave_fired(origin: Vector2, dir: Vector2)
+signal trait_triggered
 
 const SPEED := 120.0
 const DODGE_SPEED := 470.0
@@ -38,6 +40,17 @@ const STEP_COST := 10.0
 const STEP_CD := 8.0
 const STEP_TIME := 0.13
 const STEP_SPEED := 500.0
+## 줄비 검 (기획서 6장): 기본 공격 +4%, 회피 직후 2초 안의 첫 공격이 직선 파동 — 결력 15, 6초 대기
+const BLADE_BONUS := 0.04
+const POST_DODGE_WINDOW := 2.0
+const WAVE_COST := 15.0
+const WAVE_CD := 6.0
+const WAVE_LEN := 84.0
+const WAVE_WIDTH := 26.0
+const WAVE_DMG := 14.0
+## 물길 장도 특성 (기획서 7장): 회피 직후 공격 시 결력 3 회복, 6초 대기
+const TRAIT_GYEOL := 3.0
+const TRAIT_CD := 6.0
 const MASK_NORMAL := 1 | 2
 const MASK_AIRBORNE := 1
 
@@ -52,7 +65,14 @@ var gyeol := 100.0
 var carrying := false
 var dead := false
 var falling := false
-var shoe := false
+## 장비로 변신한 영물: "" / "도톰"(신발) / "줄비"(검). 한 번에 하나만.
+var gear := ""
+var shoe: bool:
+	get:
+		return gear == "도톰"
+var blade: bool:
+	get:
+		return gear == "줄비"
 
 var dodge_t := 0.0
 var dodge_cd := 0.0
@@ -77,6 +97,10 @@ var since_action := 99.0
 var hurt_flash := 0.0
 var walk_t := 0.0
 var fall_t := 0.0
+var post_dodge_t := 0.0
+var post_dodge_used := true
+var wave_cd := 0.0
+var trait_cd := 0.0
 
 
 func _ready() -> void:
@@ -110,8 +134,13 @@ func _physics_process(delta: float) -> void:
 	hurt_flash = maxf(hurt_flash - delta, 0.0)
 	fall_t = maxf(fall_t - delta, 0.0)
 	transform_fx = maxf(transform_fx - delta, 0.0)
+	post_dodge_t = maxf(post_dodge_t - delta, 0.0)
+	wave_cd = maxf(wave_cd - delta, 0.0)
+	trait_cd = maxf(trait_cd - delta, 0.0)
 
 	if was_dodging and dodge_t <= 0.0:
+		post_dodge_t = POST_DODGE_WINDOW
+		post_dodge_used = false
 		_try_extra_step()
 
 	if transform_t > 0.0:
@@ -305,14 +334,47 @@ func _auto_attack() -> void:
 	facing = slash_dir
 	slash_t = 0.15
 	attack_cd = ATTACK_CD
-	target.take_hit(ATTACK_DMG * GameState.weapon_multiplier(), global_position)
+	target.take_hit(ATTACK_DMG * damage_multiplier(), global_position)
+	_after_attack(slash_dir)
+
+
+func damage_multiplier() -> float:
+	return GameState.weapon_multiplier() * (1.0 + BLADE_BONUS if blade else 1.0)
+
+
+## 회피 직후 2초 안의 첫 공격: 물길 장도 결력 회복, 줄비 검 파동. 둘은 따로 계산된다.
+func _after_attack(dir: Vector2) -> void:
+	if post_dodge_t <= 0.0 or post_dodge_used:
+		return
+	post_dodge_used = true
+	# 비용을 먼저 내고 회복한다 (가득 찬 결력에서 회복이 버려지지 않게).
+	if blade and wave_cd <= 0.0 and gyeol >= WAVE_COST:
+		gyeol -= WAVE_COST
+		since_action = 0.0
+		wave_cd = WAVE_CD
+		_fire_wave(dir)
+	if GameState.weapon_trait() != "" and trait_cd <= 0.0:
+		gyeol = minf(max_gyeol, gyeol + TRAIT_GYEOL)
+		trait_cd = TRAIT_CD
+		trait_triggered.emit()
+
+
+## 직선 파동: 정면 폭 26px, 길이 84px. 옆은 맞히지 못한다.
+func _fire_wave(dir: Vector2) -> void:
+	var side := dir.orthogonal()
+	for e in get_tree().get_nodes_in_group("enemy"):
+		var d: Vector2 = e.global_position - global_position
+		var along := d.dot(dir)
+		if e.alive and along > 0.0 and along < WAVE_LEN + 10.0 and absf(d.dot(side)) < WAVE_WIDTH * 0.5 + 8.0:
+			e.take_hit(WAVE_DMG * damage_multiplier(), global_position)
+	wave_fired.emit(global_position, dir)
 
 
 func _skill_hits() -> void:
 	for e in get_tree().get_nodes_in_group("enemy"):
 		if e.alive and not skill_hit.has(e) and global_position.distance_to(e.global_position) < SKILL_HIT_RADIUS:
 			skill_hit.append(e)
-			e.take_hit(SKILL_DMG * GameState.weapon_multiplier(), global_position)
+			e.take_hit(SKILL_DMG * damage_multiplier(), global_position)
 
 
 func _draw() -> void:
@@ -356,6 +418,12 @@ func _draw() -> void:
 		var tip := facing * 13.0 + Vector2(0, 2)
 		var side := facing.orthogonal() * 3.0
 		draw_colored_polygon(PackedVector2Array([tip, facing * 8.0 + side + Vector2(0, 2), facing * 8.0 - side + Vector2(0, 2)]), Color("e8c070"))
+		if blade:
+			# 줄비 겹날: 비늘 무늬 칼
+			var hand := facing.orthogonal() * 9.0 + Vector2(0, 2 + bob)
+			draw_line(hand, hand + facing * 15.0, Color("c8d0d8"), 2.5)
+			for i in 3:
+				draw_circle(hand + facing * (5.0 + i * 4.0), 1.3, Color("5fc5c9"))
 		if carrying:
 			draw_rect(Rect2(-6, -24 + bob, 12, 9), Color("9a6a3a"))
 			draw_rect(Rect2(-6, -24 + bob, 12, 9), Color("5a3a1a"), false, 1.0)

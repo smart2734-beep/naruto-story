@@ -1,32 +1,52 @@
 extends CanvasLayer
-## 세로 화면 HUD와 터치 입력.
-## 왼쪽 아래 이동 패드(누른 자리에 생김), 오른쪽 아래 회피·기술·상호작용 버튼.
-## 튜토리얼 안내는 한 번에 한 동작만 보여준다 (기획서 10장).
-## PC 테스트용 키: WASD/방향키 이동, Space 회피, Q 사선베기, F 되받기, R 영물 전환, E 상호작용·대사 넘기기.
+## 세로 화면 HUD와 터치 입력. 배치는 아트·UI 명세 6장을 따른다.
+##   상단(약 160px): 작은 초상화·체력·결력·재화 / 한 줄 목표(누르면 펼침)
+##   안내: 한 번에 한 행동, 상단 아래의 작은 띠. 완료하면 사라진다.
+##   하단: 왼쪽 이동 패드, 오른쪽 회피·기술·상호작용, 아래 가운데 영물 초상화.
+## PC 테스트용 키: WASD/방향키 이동, Space 회피, Q 사선베기, F 되받기,
+##   R 영물 동행↔장비, T 활성 영물 교체, E 상호작용·대사 넘기기, Tab 정보 펼치기, Esc 닫기.
 
 signal interact_pressed
 signal portrait_pressed
+signal portrait_long_pressed
+signal craft_picked(id: String)
 
 const JOY_R := 90.0
 const TYPE_SPEED := 45.0
 const TOAST_TIME := 1.7
+const LONG_PRESS := 0.45
+const TOP_H := 160.0  ## 상시 정보 높이 (명세: 180px 이내)
+const C_PANEL := Color("202833")
+const C_PANEL_DEEP := Color("14202b")
+const C_TEXT := Color("f2ead6")
+const C_GOLD := Color("d2ad62")
+const C_GOLD_LIGHT := Color("f2d28b")
+const C_GYEOL := Color("5fc5c9")
+const C_DANGER := Color("d9514b")
 
 var player  # player.gd
 var objective_title := ""
 var objective_text := ""
 var target_world = null  ## 목표 위치(화면 밖이면 가장자리 화살표)
 var interact_label := ""
-var spirit_form := ""  ## "" = 계약 전(숨김), "동행" 또는 "신발"
+var spirit_name := ""  ## 활성 영물 이름. "" 이면 초상화를 숨긴다 (계약 전)
+var spirit_form := ""  ## "동행", "신발", "검"
 var spirit_cd := 0.0  ## 전환 대기 비율 0~1
+var spirit_can_swap := false
 
 var hint_text := ""
 var hint_time := -1.0  ## < 0 이면 지울 때까지 유지
 var toasts: Array = []  ## [text, life] — 한 번에 하나씩 차례로 보여준다
+var info_open := false
+var info_time := 0.0
 
 var dialogue: Array = []  ## [[speaker, text], ...]
 var dialogue_index := 0
 var dialogue_chars := 0.0
 var dialogue_done: Callable
+
+var craft_title := ""
+var craft_rows: Array = []  ## [{id, title, desc, cost: [[이름, 보유, 필요]], button, can}]
 
 var fade := 0.0
 var fade_text := ""
@@ -37,6 +57,9 @@ var joy_pos := Vector2.ZERO
 var joy_vec := Vector2.ZERO
 var forced_move = null  ## 자동 점검용 이동 입력 (Vector2 또는 null)
 var pressed_flash: Dictionary = {}
+var _portrait_index := -1
+var _portrait_held := 0.0
+var _portrait_long_sent := false
 
 var _canvas: Control
 
@@ -79,6 +102,7 @@ func start_dialogue(lines: Array, on_done: Callable = Callable()) -> void:
 	dialogue_done = on_done
 	joy_index = -1
 	joy_vec = Vector2.ZERO
+	info_open = false
 
 
 func dialogue_active() -> bool:
@@ -92,6 +116,22 @@ func skip_dialogue() -> void:
 		_advance_dialogue()
 
 
+func open_craft(title: String, rows: Array) -> void:
+	craft_title = title
+	craft_rows = rows
+	joy_index = -1
+	joy_vec = Vector2.ZERO
+	info_open = false
+
+
+func close_craft() -> void:
+	craft_rows = []
+
+
+func craft_open() -> bool:
+	return not craft_rows.is_empty()
+
+
 func show_fade(text: String) -> void:
 	fade = 1.0
 	fade_text = text
@@ -101,10 +141,18 @@ func hide_fade() -> void:
 	fade = 0.0
 
 
+func busy() -> bool:
+	return dialogue_active() or craft_open() or fade > 0.0
+
+
 # ── 레이아웃 ─────────────────────────────────────────────
 
 func _size() -> Vector2:
 	return _canvas.get_viewport_rect().size
+
+
+func _quest_rect() -> Rect2:
+	return Rect2(12, 104, _size().x - 24, 52)
 
 
 func _dodge_c() -> Vector2:
@@ -115,24 +163,41 @@ func _skill_c() -> Vector2:
 	return Vector2(_size().x - 268, _size().y - 112)
 
 
+func _guard_c() -> Vector2:
+	return Vector2(_size().x - 252, _size().y - 270)
+
+
 func _interact_c() -> Vector2:
 	return Vector2(_size().x - 130, _size().y - 352)
 
 
+## 명세 6장의 영물 칸 가설: 720×1280 기준 (296, 1020)
 func _portrait_c() -> Vector2:
-	return Vector2(84, _size().y - 372)
+	return Vector2(296, _size().y - 260)
 
 
-func _guard_c() -> Vector2:
-	return Vector2(_size().x - 252, _size().y - 270)
+func _skill_visible() -> bool:
+	return GameState.has_skill("사선베기")
 
 
 func _guard_visible() -> bool:
 	return GameState.has_skill("되받기")
 
 
-func _skill_visible() -> bool:
-	return GameState.has_skill("사선베기")
+func _craft_panel_rect() -> Rect2:
+	var s := _size()
+	var h := 120.0 + craft_rows.size() * 168.0
+	return Rect2(20, maxf(TOP_H + 20.0, s.y * 0.5 - h * 0.5 - 80.0), s.x - 40, h)
+
+
+func _craft_button_rect(i: int) -> Rect2:
+	var pr := _craft_panel_rect()
+	return Rect2(pr.end.x - 172, pr.position.y + 96 + i * 168 + 44, 148, 96)
+
+
+func _craft_close_c() -> Vector2:
+	var pr := _craft_panel_rect()
+	return Vector2(pr.end.x - 44, pr.position.y + 44)
 
 
 # ── 입력 ─────────────────────────────────────────────────
@@ -141,34 +206,15 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:
-			if dialogue_active():
-				_advance_dialogue()
-				return
-			if fade > 0.0 or player == null:
-				return
-			if e.position.distance_to(_dodge_c()) < 82.0:
-				_flash("dodge")
-				player.try_dodge()
-			elif _skill_visible() and e.position.distance_to(_skill_c()) < 64.0:
-				_flash("skill")
-				player.try_skill()
-			elif _guard_visible() and e.position.distance_to(_guard_c()) < 60.0:
-				_flash("guard")
-				player.try_guard()
-			elif spirit_form != "" and e.position.distance_to(_portrait_c()) < 58.0:
-				_flash("portrait")
-				portrait_pressed.emit()
-			elif interact_label != "" and e.position.distance_to(_interact_c()) < 66.0:
-				_flash("interact")
-				interact_pressed.emit()
-			elif joy_index == -1 and e.position.x < _size().x * 0.6 and e.position.y > _size().y * 0.4:
-				joy_index = e.index
-				joy_origin = e.position
-				joy_pos = e.position
+			_touch_down(e)
+		else:
+			if e.index == joy_index:
+				joy_index = -1
 				joy_vec = Vector2.ZERO
-		elif e.index == joy_index:
-			joy_index = -1
-			joy_vec = Vector2.ZERO
+			if e.index == _portrait_index:
+				_portrait_index = -1
+				if not _portrait_long_sent:
+					portrait_pressed.emit()
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
 		if d.index == joy_index:
@@ -182,26 +228,95 @@ func _input(event: InputEvent) -> void:
 			if joy_vec.length() < 0.15:
 				joy_vec = Vector2.ZERO
 	elif event is InputEventKey and event.pressed and not event.echo:
-		var k := event as InputEventKey
-		if dialogue_active():
-			if k.physical_keycode in [KEY_E, KEY_SPACE, KEY_ENTER]:
-				_advance_dialogue()
+		_key(event as InputEventKey)
+
+
+func _touch_down(e: InputEventScreenTouch) -> void:
+	if dialogue_active():
+		_advance_dialogue()
+		return
+	if craft_open():
+		_craft_touch(e.position)
+		return
+	if fade > 0.0 or player == null:
+		return
+	if info_open:
+		info_open = false
+		return
+	if _quest_rect().has_point(e.position) and objective_title != "":
+		info_open = true
+		info_time = 6.0
+	elif e.position.distance_to(_dodge_c()) < 82.0:
+		_flash("dodge")
+		player.try_dodge()
+	elif _skill_visible() and e.position.distance_to(_skill_c()) < 64.0:
+		_flash("skill")
+		player.try_skill()
+	elif _guard_visible() and e.position.distance_to(_guard_c()) < 60.0:
+		_flash("guard")
+		player.try_guard()
+	elif spirit_name != "" and e.position.distance_to(_portrait_c()) < 58.0:
+		_flash("portrait")
+		_portrait_index = e.index
+		_portrait_held = 0.0
+		_portrait_long_sent = false
+	elif interact_label != "" and e.position.distance_to(_interact_c()) < 66.0:
+		_flash("interact")
+		interact_pressed.emit()
+	elif joy_index == -1 and e.position.x < _size().x * 0.6 and e.position.y > _size().y * 0.4:
+		joy_index = e.index
+		joy_origin = e.position
+		joy_pos = e.position
+		joy_vec = Vector2.ZERO
+
+
+func _craft_touch(p: Vector2) -> void:
+	if p.distance_to(_craft_close_c()) < 48.0 or not _craft_panel_rect().has_point(p):
+		close_craft()
+		return
+	for i in craft_rows.size():
+		if _craft_button_rect(i).grow(8).has_point(p) and craft_rows[i]["can"]:
+			_flash("craft%d" % i)
+			craft_picked.emit(String(craft_rows[i]["id"]))
 			return
-		if player == null or fade > 0.0:
-			return
-		match k.physical_keycode:
-			KEY_SPACE:
-				player.try_dodge()
-			KEY_Q:
-				player.try_skill()
-			KEY_F:
-				player.try_guard()
-			KEY_R:
-				if spirit_form != "":
-					portrait_pressed.emit()
-			KEY_E, KEY_ENTER:
-				if interact_label != "":
-					interact_pressed.emit()
+
+
+func _key(k: InputEventKey) -> void:
+	if dialogue_active():
+		if k.physical_keycode in [KEY_E, KEY_SPACE, KEY_ENTER]:
+			_advance_dialogue()
+		return
+	if craft_open():
+		if k.physical_keycode == KEY_ESCAPE or k.physical_keycode == KEY_E:
+			close_craft()
+		elif k.physical_keycode >= KEY_1 and k.physical_keycode <= KEY_9:
+			var i := int(k.physical_keycode - KEY_1)
+			if i < craft_rows.size() and craft_rows[i]["can"]:
+				craft_picked.emit(String(craft_rows[i]["id"]))
+		return
+	if player == null or fade > 0.0:
+		return
+	match k.physical_keycode:
+		KEY_SPACE:
+			player.try_dodge()
+		KEY_Q:
+			player.try_skill()
+		KEY_F:
+			player.try_guard()
+		KEY_R:
+			if spirit_name != "":
+				portrait_pressed.emit()
+		KEY_T:
+			if spirit_name != "":
+				portrait_long_pressed.emit()
+		KEY_TAB:
+			info_open = not info_open
+			info_time = 6.0
+		KEY_ESCAPE:
+			info_open = false
+		KEY_E, KEY_ENTER:
+			if interact_label != "":
+				interact_pressed.emit()
 
 
 func _flash(id: String) -> void:
@@ -238,21 +353,29 @@ func _advance_dialogue() -> void:
 
 func _process(delta: float) -> void:
 	if player:
-		var kb := _keyboard_vector()
 		if forced_move != null:
 			player.move_input = forced_move
-		elif dialogue_active() or fade > 0.0:
+		elif busy():
 			player.move_input = Vector2.ZERO
 		elif joy_index != -1:
 			player.move_input = joy_vec
 		else:
-			player.move_input = kb
+			player.move_input = _keyboard_vector()
 	if dialogue_active():
 		dialogue_chars += TYPE_SPEED * delta
 	if hint_time > 0.0:
 		hint_time -= delta
 		if hint_time <= 0.0:
 			hint_text = ""
+	if info_open:
+		info_time -= delta
+		if info_time <= 0.0:
+			info_open = false
+	if _portrait_index != -1 and not _portrait_long_sent:
+		_portrait_held += delta
+		if _portrait_held >= LONG_PRESS:
+			_portrait_long_sent = true
+			portrait_long_pressed.emit()
 	if not toasts.is_empty():
 		toasts[0][1] -= delta
 		if toasts[0][1] <= 0.0:
@@ -264,7 +387,7 @@ func _process(delta: float) -> void:
 	_canvas.queue_redraw()
 
 
-# ── 그리기 ───────────────────────────────────────────────
+# ── 그리기 도우미 ─────────────────────────────────────────
 
 func _panel(rect: Rect2, bg: Color, border: Color = Color(0, 0, 0, 0), radius: int = 14) -> void:
 	var sb := StyleBoxFlat.new()
@@ -276,70 +399,120 @@ func _panel(rect: Rect2, bg: Color, border: Color = Color(0, 0, 0, 0), radius: i
 	_canvas.draw_style_box(sb, rect)
 
 
-func _text(pos: Vector2, text: String, size: int, color: Color = Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
+func _text(pos: Vector2, text: String, size: int, color: Color = C_TEXT, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
 	_canvas.draw_string(GameState.ui_font, pos, text, align, width, size, color)
 
 
 func _bar(rect: Rect2, ratio: float, col: Color, label: String) -> void:
 	_panel(rect, Color(0, 0, 0, 0.55), Color(0, 0, 0, 0), 8)
 	if ratio > 0.0:
-		_panel(Rect2(rect.position, Vector2(rect.size.x * clampf(ratio, 0.0, 1.0), rect.size.y)), col, Color(0, 0, 0, 0), 8)
-	_text(rect.position + Vector2(12, rect.size.y - 8), label, 20)
+		_panel(Rect2(rect.position, Vector2(maxf(rect.size.x * clampf(ratio, 0.0, 1.0), 16.0), rect.size.y)), col, Color(0, 0, 0, 0), 8)
+	_text(rect.position + Vector2(10, rect.size.y - 6), label, 19)
 
+
+func _short_title() -> String:
+	var dot := objective_title.find(".")
+	return objective_title.substr(0, dot) if dot > 0 else objective_title
+
+
+# ── 그리기 ───────────────────────────────────────────────
 
 func _on_draw() -> void:
 	var s := _size()
-	if player:
-		_draw_status(s)
-	_draw_objective(s)
 	_draw_target_arrow(s)
 	if dialogue_active():
 		_draw_dialogue(s)
-	else:
+	elif not craft_open():
 		_draw_controls(s)
+	if player:
+		_draw_status(s)
+	_draw_objective(s)
 	_draw_hint(s)
 	_draw_toasts(s)
+	if info_open:
+		_draw_info(s)
+	if craft_open():
+		_draw_craft(s)
 	if fade > 0.0:
 		_canvas.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.75 * fade))
-		_text(Vector2(40, s.y * 0.45), fade_text, 30, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, s.x - 80)
+		_canvas.draw_multiline_string(GameState.ui_font, Vector2(40, s.y * 0.42), fade_text, HORIZONTAL_ALIGNMENT_CENTER, s.x - 80, 30, 4, C_TEXT)
 
 
 func _draw_status(s: Vector2) -> void:
-	_panel(Rect2(16, 16, s.x - 32, 112), Color(0.08, 0.1, 0.14, 0.78))
-	_text(Vector2(32, 56), "Lv.%d" % GameState.level, 30, Color("e8c070"))
-	_text(Vector2(130, 56), GameState.weapon, 22, Color(0.85, 0.85, 0.85))
-	_text(Vector2(s.x - 232, 56), "재화 %d" % GameState.currency, 24, Color("ffe08a"), HORIZONTAL_ALIGNMENT_RIGHT, 200)
-	var bw := (s.x - 80) * 0.5
-	_bar(Rect2(32, 74, bw, 36), player.hp / player.max_hp, Color("d04848"), "체력 %d" % roundi(player.hp))
-	_bar(Rect2(48 + bw, 74, bw, 36), player.gyeol / player.max_gyeol, Color("38a89a"), "결력 %d" % roundi(player.gyeol))
+	_panel(Rect2(12, 12, s.x - 24, 84), Color(C_PANEL, 0.85))
+	# 작은 초상화와 레벨
+	var c := Vector2(52, 54)
+	_canvas.draw_circle(c, 30.0, Color("3a4a5c"))
+	_canvas.draw_circle(c + Vector2(0, 4), 15.0, Color("f0d2b0"))
+	_canvas.draw_arc(c + Vector2(0, 2), 15.0, PI, TAU, 12, Color("2d3e5c"), 6.0)
+	_canvas.draw_line(c + Vector2(-15, -2), c + Vector2(15, -2), Color("7fd6c2"), 3.0)
+	_canvas.draw_arc(c, 30.0, 0, TAU, 32, C_GOLD, 2.0)
+	_panel(Rect2(c.x - 26, c.y + 18, 52, 24), C_PANEL_DEEP, C_GOLD, 8)
+	_text(Vector2(c.x - 26, c.y + 37), "Lv.%d" % GameState.level, 18, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_CENTER, 52)
+	var x0 := 96.0
+	var bw := s.x - x0 - 150.0
+	_bar(Rect2(x0, 22, bw, 28), player.hp / player.max_hp, C_DANGER, "체력 %d" % roundi(player.hp))
+	_bar(Rect2(x0, 58, bw, 28), player.gyeol / player.max_gyeol, Color(C_GYEOL, 0.85), "결력 %d" % roundi(player.gyeol))
+	_text(Vector2(s.x - 144, 46), "재화", 18, Color(C_TEXT, 0.7), HORIZONTAL_ALIGNMENT_RIGHT, 120)
+	_text(Vector2(s.x - 144, 80), str(GameState.currency), 26, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_RIGHT, 120)
 
 
 func _draw_objective(s: Vector2) -> void:
-	if objective_title == "":
+	if objective_title == "" or info_open:
 		return
-	_panel(Rect2(16, 140, s.x - 32, 92), Color(0.08, 0.1, 0.14, 0.62))
-	_text(Vector2(32, 176), objective_title, 24, Color("7fd6c2"))
-	_text(Vector2(32, 214), "▸ " + objective_text, 24)
+	var r := _quest_rect()
+	_panel(r, Color(C_PANEL, 0.72))
+	var tag := _short_title()
+	_panel(Rect2(r.position + Vector2(8, 8), Vector2(56, 36)), Color("2d4a4a"), Color(0, 0, 0, 0), 8)
+	_text(r.position + Vector2(8, 34), tag, 20, Color("7fd6c2"), HORIZONTAL_ALIGNMENT_CENTER, 56)
+	_text(r.position + Vector2(76, 35), objective_text, 23, C_TEXT, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 120)
+	_text(Vector2(r.end.x - 40, r.position.y + 34), "▾", 22, Color(C_TEXT, 0.6))
+
+
+func _draw_info(s: Vector2) -> void:
+	var lines: Array = []
+	lines.append(["목표", objective_text])
+	lines.append(["장비", GameState.weapon_label()])
+	var trait_text := GameState.weapon_trait()
+	if trait_text != "":
+		lines.append(["특성", trait_text])
+	var mats: Array[String] = []
+	for k in GameState.items:
+		if int(GameState.items[k]) > 0:
+			mats.append("%s %d" % [k, GameState.items[k]])
+	lines.append(["재료", ", ".join(mats) if not mats.is_empty() else "없음"])
+	if not GameState.spirits.is_empty():
+		var sp: Array[String] = []
+		for id in GameState.spirits:
+			sp.append(id + (" (활성)" if id == GameState.active_spirit else " (휴식)"))
+		lines.append(["영물", ", ".join(sp)])
+	var r := Rect2(12, 104, s.x - 24, 76 + lines.size() * 44)
+	_panel(r, Color(C_PANEL_DEEP, 0.95), Color("7fd6c2"))
+	_text(r.position + Vector2(20, 40), objective_title, 25, Color("7fd6c2"))
+	for i in lines.size():
+		var y := r.position.y + 84 + i * 44
+		_text(Vector2(r.position.x + 20, y), String(lines[i][0]), 20, Color(C_TEXT, 0.6))
+		_text(Vector2(r.position.x + 92, y), String(lines[i][1]), 21, C_TEXT, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 110)
+	_text(Vector2(r.end.x - 200, r.end.y - 12), "눌러서 접기", 17, Color(C_TEXT, 0.5), HORIZONTAL_ALIGNMENT_RIGHT, 180)
 
 
 func _draw_target_arrow(s: Vector2) -> void:
-	if target_world == null or dialogue_active():
+	if target_world == null or busy():
 		return
 	var sp: Vector2 = _canvas.get_viewport().get_canvas_transform() * (target_world as Vector2)
-	var margin := Rect2(40, 260, s.x - 80, s.y - 560)
+	var margin := Rect2(40, TOP_H + 40, s.x - 80, s.y - TOP_H - 460)
 	if margin.has_point(sp):
 		return
-	var center := s * 0.5
+	var center := Vector2(s.x * 0.5, s.y * 0.56)
 	var dir := (sp - center).normalized()
 	var p := center
-	# 화면 안쪽 사각형 가장자리까지 이동
 	for i in 400:
 		var np := p + dir * 4.0
 		if not margin.has_point(np):
 			break
 		p = np
 	var side := dir.orthogonal()
-	_canvas.draw_colored_polygon(PackedVector2Array([p + dir * 26.0, p - dir * 10.0 + side * 18.0, p - dir * 10.0 - side * 18.0]), Color(1.0, 0.85, 0.3, 0.9))
+	_canvas.draw_colored_polygon(PackedVector2Array([p + dir * 26.0, p - dir * 10.0 + side * 18.0, p - dir * 10.0 - side * 18.0]), Color(C_GOLD_LIGHT, 0.9))
 
 
 func _round_button(c: Vector2, r: float, label: String, col: Color, id: String, cd_ratio := 0.0, sub := "", enabled := true) -> void:
@@ -366,7 +539,6 @@ func _round_button(c: Vector2, r: float, label: String, col: Color, id: String, 
 func _draw_controls(s: Vector2) -> void:
 	if player == null or fade > 0.0:
 		return
-	# 이동 패드
 	var base := joy_origin if joy_index != -1 else Vector2(150, s.y - 190)
 	var knob := base + joy_vec * JOY_R
 	_canvas.draw_circle(base, JOY_R, Color(1, 1, 1, 0.12 if joy_index == -1 else 0.2))
@@ -376,83 +548,137 @@ func _draw_controls(s: Vector2) -> void:
 	var dodge_ratio: float = player.dodge_cd / (player.DODGE_CD + player.DODGE_TIME)
 	_round_button(_dodge_c(), 72.0, "회피", Color(0.2, 0.45, 0.75, 0.85), "dodge", dodge_ratio)
 	if _skill_visible():
-		var ratio: float = player.skill_cd / player.SKILL_CD
-		_round_button(_skill_c(), 56.0, "사선베기", Color(0.15, 0.55, 0.5, 0.85), "skill", ratio, "결력 15", player.gyeol >= player.SKILL_COST)
+		_round_button(_skill_c(), 56.0, "사선베기", Color(0.15, 0.55, 0.5, 0.85), "skill", player.skill_cd / player.SKILL_CD, "결력 15", player.gyeol >= player.SKILL_COST)
 	if _guard_visible():
 		_round_button(_guard_c(), 52.0, "되받기", Color(0.45, 0.4, 0.7, 0.85), "guard", player.guard_cd / player.GUARD_CD, "결력 12", player.gyeol >= player.GUARD_COST)
 	if interact_label != "":
 		_round_button(_interact_c(), 58.0, interact_label, Color(0.8, 0.6, 0.15, 0.9), "interact")
-	if spirit_form != "":
+	if spirit_name != "":
 		_draw_portrait()
+
+
+## 활성 영물 초상화: 누르면 동행 ↔ 장비, 길게 누르면 활성 영물 교체.
+func _draw_portrait() -> void:
+	var c := _portrait_c()
+	var r := 48.0
+	var bg := Color(0.18, 0.28, 0.14, 0.9) if spirit_name == "도톰" else Color(0.14, 0.24, 0.3, 0.9)
+	if pressed_flash.has("portrait"):
+		bg = bg.lightened(0.3)
+	_canvas.draw_circle(c, r, bg)
+	_canvas.draw_arc(c, r, 0, TAU, 40, Color("8fdc5a") if spirit_name == "도톰" else C_GYEOL, 3.0)
+	if spirit_name == "도톰":
+		if spirit_form == "신발":
+			_canvas.draw_circle(c + Vector2(-12, -2), 13.0, Color("6a8a40"))
+			_canvas.draw_circle(c + Vector2(12, -2), 13.0, Color("6a8a40"))
+			_canvas.draw_circle(c + Vector2(-12, -4), 4.0, Color("b0e070"))
+			_canvas.draw_circle(c + Vector2(12, -4), 4.0, Color("b0e070"))
+		else:
+			_canvas.draw_circle(c + Vector2(0, -2), 22.0, Color("6a8a40"))
+			_canvas.draw_circle(c + Vector2(-13, -20), 6.0, Color("5a7a34"))
+			_canvas.draw_circle(c + Vector2(13, -20), 6.0, Color("5a7a34"))
+			_canvas.draw_circle(c + Vector2(-7, -4), 3.0, Color("1a1a10"))
+			_canvas.draw_circle(c + Vector2(7, -4), 3.0, Color("1a1a10"))
+	else:
+		if spirit_form == "검":
+			_canvas.draw_line(c + Vector2(-20, 22), c + Vector2(20, -22), Color("c8d0d8"), 7.0)
+			for i in 4:
+				var p := c + Vector2(-12 + i * 9, 12 - i * 10)
+				_canvas.draw_circle(p, 3.5, C_GYEOL)
+			_canvas.draw_line(c + Vector2(-26, 14), c + Vector2(-12, 28), C_GOLD, 5.0)
+		else:
+			var pts := PackedVector2Array()
+			for i in 12:
+				pts.append(c + Vector2(-26 + i * 4.8, sin(i * 0.8) * 9.0))
+			_canvas.draw_polyline(pts, Color("7aa8b0"), 9.0)
+			_canvas.draw_circle(c + Vector2(28, 2), 8.0, Color("8ab8c0"))
+			_canvas.draw_circle(c + Vector2(30, 0), 2.5, Color("102028"))
+	if spirit_cd > 0.0:
+		var pts2 := PackedVector2Array([c])
+		for i in 33:
+			var a := -PI / 2.0 + TAU * spirit_cd * i / 32.0
+			pts2.append(c + Vector2(cos(a), sin(a)) * r)
+		_canvas.draw_colored_polygon(pts2, Color(0, 0, 0, 0.5))
+	if player and player.transform_t > 0.0 and player.transform_total > 0.0:
+		var p2: float = 1.0 - player.transform_t / player.transform_total
+		_canvas.draw_arc(c, r + 8.0, -PI / 2.0, -PI / 2.0 + TAU * p2, 40, Color("b0ff70"), 6.0)
+	if spirit_form == "신발" and player and player.step_cd > 0.0:
+		_canvas.draw_arc(c, r - 6.0, -PI / 2.0, -PI / 2.0 + TAU * player.step_cd / player.STEP_CD, 30, Color(1, 1, 1, 0.5), 4.0)
+	if spirit_form == "검" and player and player.wave_cd > 0.0:
+		_canvas.draw_arc(c, r - 6.0, -PI / 2.0, -PI / 2.0 + TAU * player.wave_cd / player.WAVE_CD, 30, Color(1, 1, 1, 0.5), 4.0)
+	if _portrait_index != -1 and spirit_can_swap and not _portrait_long_sent:
+		_canvas.draw_arc(c, r + 4.0, -PI / 2.0, -PI / 2.0 + TAU * _portrait_held / LONG_PRESS, 40, C_GOLD_LIGHT, 4.0)
+	_text(Vector2(c.x - 80, c.y + r + 26), spirit_name + " · " + spirit_form, 20, Color("d8f0b0"), HORIZONTAL_ALIGNMENT_CENTER, 160)
+	if spirit_can_swap:
+		_text(Vector2(c.x - 80, c.y + r + 48), "길게 눌러 교체", 16, Color(C_TEXT, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 160)
 
 
 func _draw_dialogue(s: Vector2) -> void:
 	var line: Array = dialogue[dialogue_index]
-	var rect := Rect2(16, s.y - 400, s.x - 32, 280)
-	_panel(rect, Color(0.07, 0.08, 0.11, 0.92), Color("7fd6c2"))
-	_panel(Rect2(rect.position + Vector2(24, -26), Vector2(180, 52)), Color("2d3e5c"), Color("7fd6c2"), 12)
-	_text(rect.position + Vector2(24, 10), String(line[0]), 26, Color("e8c070"), HORIZONTAL_ALIGNMENT_CENTER, 180)
 	var full := String(line[1])
+	var text_w := s.x - 96
+	var th := GameState.ui_font.get_multiline_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, text_w, 28).y
+	var h := clampf(th + 104.0, 160.0, 360.0)
+	var rect := Rect2(16, s.y - 96 - h, s.x - 32, h)
+	_panel(rect, Color(C_PANEL_DEEP, 0.94), Color("7fd6c2"))
+	_panel(Rect2(rect.position + Vector2(24, -26), Vector2(180, 52)), Color("2d3e5c"), Color("7fd6c2"), 12)
+	_text(rect.position + Vector2(24, 10), String(line[0]), 26, C_GOLD_LIGHT, HORIZONTAL_ALIGNMENT_CENTER, 180)
 	var shown := full.substr(0, int(dialogue_chars))
-	_canvas.draw_multiline_string(GameState.ui_font, rect.position + Vector2(32, 76), shown, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 64, 28, 5, Color.WHITE)
+	_canvas.draw_multiline_string(GameState.ui_font, rect.position + Vector2(32, 70), shown, HORIZONTAL_ALIGNMENT_LEFT, text_w, 28, 8, C_TEXT)
 	if dialogue_chars >= full.length():
 		var blink := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 150.0)
-		_text(Vector2(rect.end.x - 260, rect.end.y - 22), "터치해서 계속 ▼", 20, Color(1, 1, 1, 0.5 + 0.4 * blink), HORIZONTAL_ALIGNMENT_RIGHT, 236)
+		_text(Vector2(rect.end.x - 260, rect.end.y - 16), "터치해서 계속 ▼", 19, Color(1, 1, 1, 0.5 + 0.4 * blink), HORIZONTAL_ALIGNMENT_RIGHT, 236)
 
 
 func _draw_hint(s: Vector2) -> void:
-	if hint_text == "" or dialogue_active():
+	if hint_text == "" or busy() or info_open:
 		return
-	var rect := Rect2(40, 252, s.x - 80, 84)
-	_panel(rect, Color(0.1, 0.08, 0.02, 0.85), Color("ffcc33"))
-	_canvas.draw_multiline_string(GameState.ui_font, rect.position + Vector2(20, 36), hint_text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x - 40, 24, 2, Color("fff2c0"))
+	var tw := GameState.ui_font.get_multiline_string_size(hint_text, HORIZONTAL_ALIGNMENT_CENTER, s.x - 120, 22).y
+	var rect := Rect2(36, TOP_H + 8, s.x - 72, tw + 22)
+	_panel(rect, Color(0.12, 0.09, 0.03, 0.82), Color(C_GOLD, 0.9), 12)
+	_canvas.draw_multiline_string(GameState.ui_font, rect.position + Vector2(24, 32), hint_text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x - 48, 22, 3, C_GOLD_LIGHT)
 
 
 func _draw_toasts(s: Vector2) -> void:
-	if toasts.is_empty():
+	if toasts.is_empty() or craft_open():
 		return
 	var tst: Array = toasts[0]
 	var life := float(tst[1])
 	var a := clampf(minf(life / 0.3, (TOAST_TIME - life) / 0.15), 0.0, 1.0)
-	var tw := GameState.ui_font.get_string_size(String(tst[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 25).x
-	var w := clampf(tw + 56.0, 320.0, s.x - 32.0)
-	var rect := Rect2(s.x * 0.5 - w * 0.5, 352 - (1.0 - a) * 12.0, w, 54)
+	var tw := GameState.ui_font.get_string_size(String(tst[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x
+	var w := clampf(tw + 56.0, 300.0, s.x - 32.0)
+	var y := TOP_H + 76.0 if hint_text != "" else TOP_H + 12.0
+	var rect := Rect2(s.x * 0.5 - w * 0.5, y - (1.0 - a) * 12.0, w, 50)
 	_panel(rect, Color(0.05, 0.2, 0.18, 0.9 * a), Color(0.5, 0.85, 0.76, a))
-	_text(rect.position + Vector2(0, 37), String(tst[0]), 25, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_CENTER, rect.size.x)
+	_text(rect.position + Vector2(0, 34), String(tst[0]), 24, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_CENTER, rect.size.x)
 	if toasts.size() > 1:
-		_text(rect.position + Vector2(0, 76), "+%d" % (toasts.size() - 1), 18, Color(1, 1, 1, 0.6 * a), HORIZONTAL_ALIGNMENT_CENTER, rect.size.x)
+		_text(rect.position + Vector2(0, 70), "+%d" % (toasts.size() - 1), 18, Color(1, 1, 1, 0.6 * a), HORIZONTAL_ALIGNMENT_CENTER, rect.size.x)
 
-## 영물 초상화: 누르면 동행 ↔ 장비 전환. 변신 준비 중이면 초록 고리가 찬다.
-func _draw_portrait() -> void:
-	var c := _portrait_c()
-	var r := 50.0
-	var bg := Color(0.18, 0.28, 0.14, 0.9)
-	if pressed_flash.has("portrait"):
-		bg = bg.lightened(0.3)
-	_canvas.draw_circle(c, r, bg)
-	_canvas.draw_arc(c, r, 0, TAU, 40, Color("8fdc5a"), 3.0)
-	if spirit_form == "신발":
-		# 이끼 무늬 신발
-		_canvas.draw_circle(c + Vector2(-12, -2), 13.0, Color("6a8a40"))
-		_canvas.draw_circle(c + Vector2(12, -2), 13.0, Color("6a8a40"))
-		_canvas.draw_circle(c + Vector2(-12, -4), 4.0, Color("b0e070"))
-		_canvas.draw_circle(c + Vector2(12, -4), 4.0, Color("b0e070"))
-	else:
-		_canvas.draw_circle(c + Vector2(0, -2), 22.0, Color("6a8a40"))
-		_canvas.draw_circle(c + Vector2(-13, -20), 6.0, Color("5a7a34"))
-		_canvas.draw_circle(c + Vector2(13, -20), 6.0, Color("5a7a34"))
-		_canvas.draw_circle(c + Vector2(-7, -4), 3.0, Color("1a1a10"))
-		_canvas.draw_circle(c + Vector2(7, -4), 3.0, Color("1a1a10"))
-	if spirit_cd > 0.0:
-		var pts := PackedVector2Array([c])
-		for i in 33:
-			var a := -PI / 2.0 + TAU * spirit_cd * i / 32.0
-			pts.append(c + Vector2(cos(a), sin(a)) * r)
-		_canvas.draw_colored_polygon(pts, Color(0, 0, 0, 0.5))
-	if player and player.transform_t > 0.0 and player.transform_total > 0.0:
-		var p: float = 1.0 - player.transform_t / player.transform_total
-		_canvas.draw_arc(c, r + 8.0, -PI / 2.0, -PI / 2.0 + TAU * p, 40, Color("b0ff70"), 6.0)
-	if spirit_form == "신발" and player and player.step_cd > 0.0:
-		var sp: float = player.step_cd / player.STEP_CD
-		_canvas.draw_arc(c, r - 6.0, -PI / 2.0, -PI / 2.0 + TAU * sp, 30, Color(1, 1, 1, 0.5), 4.0)
-	_text(Vector2(c.x - 70, c.y + r + 26), "도톰 · " + spirit_form, 20, Color("d8f0b0"), HORIZONTAL_ALIGNMENT_CENTER, 140)
+
+## 작업대: 한 화면에 제작·강화 목록. 재료는 (보유/필요)로 표시하고 부족하면 붉게.
+func _draw_craft(s: Vector2) -> void:
+	_canvas.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.45))
+	var pr := _craft_panel_rect()
+	_panel(pr, Color(C_PANEL_DEEP, 0.97), C_GOLD)
+	_text(pr.position + Vector2(28, 52), craft_title, 28, C_GOLD_LIGHT)
+	var cc := _craft_close_c()
+	_canvas.draw_circle(cc, 26.0, Color("3a4250"))
+	_text(Vector2(cc.x - 26, cc.y + 10), "✕", 26, C_TEXT, HORIZONTAL_ALIGNMENT_CENTER, 52)
+	for i in craft_rows.size():
+		var row: Dictionary = craft_rows[i]
+		var y := pr.position.y + 96 + i * 168
+		_panel(Rect2(pr.position.x + 16, y, pr.size.x - 32, 156), Color(C_PANEL, 0.9), Color(0, 0, 0, 0), 12)
+		_text(Vector2(pr.position.x + 36, y + 38), String(row["title"]), 25, C_TEXT)
+		_text(Vector2(pr.position.x + 36, y + 72), String(row["desc"]), 19, Color(C_TEXT, 0.7), HORIZONTAL_ALIGNMENT_LEFT, pr.size.x - 240)
+		var cx := pr.position.x + 36
+		for cost in row["cost"]:
+			var ok: bool = int(cost[1]) >= int(cost[2])
+			var label := "%s %d/%d" % [cost[0], cost[1], cost[2]]
+			_text(Vector2(cx, y + 116), label, 20, Color("9be7a0") if ok else Color("ff8a70"))
+			cx += GameState.ui_font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x + 22
+		var br := _craft_button_rect(i)
+		var can: bool = row["can"]
+		var col := Color(C_GOLD, 0.95) if can else Color(0.3, 0.3, 0.3, 0.8)
+		if pressed_flash.has("craft%d" % i):
+			col = col.lightened(0.3)
+		_panel(br, col, Color(0, 0, 0, 0), 14)
+		_text(Vector2(br.position.x, br.position.y + 60), String(row["button"]), 26, Color("1a1408") if can else Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_CENTER, br.size.x)

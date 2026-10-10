@@ -8,7 +8,7 @@ signal trusted
 signal arrived
 signal marked
 
-enum State { NEST, HIDE, APPROACH, WAIT, LEAD, COMPANION, MARKING, EQUIPPED }
+enum State { NEST, HIDE, APPROACH, WAIT, LEAD, COMPANION, MARKING, EQUIPPED, RESTING }
 
 const STARTLE_DIST := 70.0
 const STARTLE_SPEED := 30.0
@@ -105,9 +105,9 @@ func _process(delta: float) -> void:
 				if t <= 0.0:
 					state = State.COMPANION
 					marked.emit()
-		State.EQUIPPED:
+		State.EQUIPPED, State.RESTING:
 			pass
-	visible = state != State.EQUIPPED
+	visible = state != State.EQUIPPED and state != State.RESTING
 	queue_redraw()
 
 
@@ -129,9 +129,14 @@ func start_lead(path: Array[Vector2]) -> void:
 func become_companion() -> void:
 	has_nest = false
 	calm_enabled = false
-	if state == State.EQUIPPED and player:
+	if (state == State.EQUIPPED or state == State.RESTING) and player:
 		position = player.position + Vector2(14, 6)
 	state = State.COMPANION
+
+
+## 활성 칸에서 빠져 숙소에서 쉰다 (전투 보너스 없음).
+func rest() -> void:
+	state = State.RESTING
 
 
 func equip() -> void:
