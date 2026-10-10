@@ -111,6 +111,9 @@ var save_system
 var _loading := false
 var _last_checkpoint := Vector2.INF
 var _checkpoint_poll := 0.0
+var _perf_t := 0.0
+var _perf_frames := 0
+var _perf_worst := 0.0
 var _drain_time := 0.0
 
 var stage: Stage = Stage.TALK_DANU
@@ -520,6 +523,7 @@ func _update_rope_objective() -> void:
 func _process(delta: float) -> void:
 	player.locked = hud.dialogue_active()
 	_poll_checkpoint(delta)
+	_perf_log(delta)
 	moved_distance += player.position.distance_to(_last_player_pos)
 	_last_player_pos = player.position
 	for k in _switch_cd:
@@ -942,7 +946,7 @@ func _on_portrait() -> void:
 	if hud.dialogue_active() or player.dead or player.falling:
 		return
 	if not GameState.spirits.has(id):
-		hud.toast("%s와는 아직 계약 전이라 변신할 수 없어요" % id)
+		hud.toast("%s 아직 계약 전이라 변신할 수 없어요" % josa(id, "과는", "와는"))
 		return
 	if (node == dotom and dotom.state == Dotom.State.MARKING) or (node == julbi and julbi.state == Julbi.State.MARKING):
 		return
@@ -1016,7 +1020,7 @@ func set_active_spirit(id: String) -> void:
 	GameState.active_spirit = id
 	spirit_nodes[id].become_companion()
 	_refresh_spirit_hud()
-	hud.toast("%s와 함께 · %s는 숙소에서 쉼" % [id, old])
+	hud.toast("%s 함께 · %s 숙소에서 쉼" % [josa(id, "과", "와"), josa(old, "은", "는")])
 	request_save("swap")
 	if stage == Stage.Q4_SWAP and id == "줄비":
 		hud.clear_hint()
@@ -1693,3 +1697,30 @@ func _save_summary(d: Dictionary) -> String:
 
 func _tz_offset() -> int:
 	return int(Time.get_time_zone_from_system().get("bias", 0)) * 60
+
+
+## 휴대폰 디버그 빌드에서만: 5초마다 평균 FPS·최악 프레임 시간을 logcat(godot)에 남긴다 (실기기 성능 기록용).
+func _perf_log(delta: float) -> void:
+	if not (OS.is_debug_build() and OS.has_feature("mobile")):
+		return
+	_perf_t += delta
+	_perf_frames += 1
+	_perf_worst = maxf(_perf_worst, delta)
+	if _perf_t >= 5.0:
+		var alive := 0
+		for e in enemies:
+			if is_instance_valid(e) and e.alive and e.is_physics_processing() and e.position.distance_to(player.position) < 400.0:
+				alive += 1
+		print("PERF fps=%.1f worst_ms=%.1f stage=%s area=%s enemies_near=%d" % [_perf_frames / _perf_t, _perf_worst * 1000.0, Stage.keys()[stage], "dungeon" if in_dungeon else "overworld", alive])
+		_perf_t = 0.0
+		_perf_frames = 0
+		_perf_worst = 0.0
+
+
+## 받침에 맞는 조사: 도톰 → 도톰과/도톰은, 줄비 → 줄비와/줄비는
+static func josa(word: String, with_final: String, without_final: String) -> String:
+	if word == "":
+		return word
+	var code := word.unicode_at(word.length() - 1)
+	var has_final := code >= 0xAC00 and code <= 0xD7A3 and (code - 0xAC00) % 28 != 0
+	return word + (with_final if has_final else without_final)

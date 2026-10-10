@@ -39,7 +39,7 @@ Godot 4.7.2에서 **프로젝트 가져오기 → `game/project.godot`** 선택 
 Godot_v4.7.2-stable_win64_console.exe --headless --path game -- --autotest
 ```
 
-아트 8 · Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 10 · Codex 재현 8 · Q5 35, 모두 171개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만, `--art`는 아트 8개만 점검한다. 새 자산을 받은 뒤에는 먼저 `--headless --editor --path game --import`로 불러오기 캐시를 만든다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
+아트 8 · Q1 22 · Q2 21 · Q3 25 · 영물 규칙 11 · Q4 31 · HUD 11 · Codex 재현 8 · Q5 35, 모두 172개 항목을 확인하고, 모두 통과하면 종료 코드 0을 돌려준다. `-- --autotest --q1`을 쓰면 Q1 22개만, `--art`는 아트 8개만 점검한다. 새 자산을 받은 뒤에는 먼저 `--headless --editor --path game --import`로 불러오기 캐시를 만든다. 예고·회피·피격, 발판 붕괴와 재시작, 도톰 접근·계약, 동행 탐지, 변신, 틈 건너기, 보상 중복 방지까지 포함한다. 코드는 [game/scripts/devtools.gd](game/scripts/devtools.gd)에 있다.
 
 스크린샷: `-- --shot=경로.png --scenario=이름` (start, info, dialogue, aim, reward, q2_ropes, q2_calm, q2_follow, q3_marked, q3_shoe, q3_patrol, q3_done, q3_preview, q4_craft, q4_hooks, q4_wave, q4_done, q5_choice, q5_drain, q5_escort, q5_claw, q5_release, q5_end)
 
@@ -59,6 +59,7 @@ Godot_v4.7.2-stable_win64_console.exe --headless --path game -- --autotest
 - [x] 물레방아 던전·거름집게·Q5 「물을 돌려놓는 손」: 영물 선택 → 1방 → 물레 손잡이 배수 → 정비공 구조·안내 → 거름집게(직선 집게·바닥 쓸기·물길 방출, 수문으로 안전 지대) → 고리 회수와 보관 선택 → 사다리령 인장, 여행 준비 장면에서 끝
 - [x] 로컬 저장: 슬롯 1개(user://save_1.json, 임시 파일→교체, 직전 정상 백업), 자동 저장, 이어하기/새로 시작, 손상 파일 보관 — `tools/save-roundtrip.ps1`(실제 파일·새 프로세스 재시작 17회)
 - [x] Android 디버그 APK: `tools/build-android.ps1` → `build/android/gyeol-prototype-debug.apk` ([빌드 안내](docs/android-build.md))
-- [ ] 실제 휴대폰 설치·멀티터치·성능 점검
+- [x] 실제 휴대폰 첫 점검 (Galaxy S25, adb): 설치·실행·한 손가락 조작·백그라운드 저장·재접속·60fps — [협업 현황 17장](docs/project-status.md)
+- [ ] 사람이 직접 하는 멀티터치·보스 반응 시간·전체 플레이·장시간 발열
 
 이음터 시작 구역의 플레이어·단우·타일·소품은 교육원 아트 v0.1(game/assets)을 쓴다. 나머지는 코드로 그린 임시 도형이다. 수치는 기획서의 초기 가설이며 플레이 테스트로 조정한다.

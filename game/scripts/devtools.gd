@@ -875,6 +875,7 @@ func _test_hud() -> void:
 	_check(h._dodge_c().y == dodge_before.y - 40.0 and h._portrait_c().y == portrait_before.y - 40.0, "하단 안전 영역만큼 조작 버튼을 올림")
 	h.inset_bottom = 0.0
 	_check(h.platform_text("영물을 바꿔요 (PC: T)", true) == "영물을 바꿔요" and h.platform_text("영물을 바꿔요 (PC: T)", false) == "영물을 바꿔요 (PC: T)", "휴대폰 안내에는 PC 키 표시 없음")
+	_check(Main.josa("도톰", "과", "와") == "도톰과" and Main.josa("줄비", "과", "와") == "줄비와" and Main.josa("도톰", "은", "는") == "도톰은", "받침에 맞는 조사 (도톰과 / 줄비와 / 도톰은)")
 func _to_q4() -> void:
 	await _to_q3()
 	_teleport(Main.GAP_START)
