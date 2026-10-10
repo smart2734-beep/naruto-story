@@ -1,0 +1,153 @@
+{
+  "version": "0.1",
+  "tile_size": [
+    32,
+    32
+  ],
+  "filter": "nearest",
+  "characters": {
+    "frame": [
+      32,
+      40
+    ],
+    "sheet": [
+      128,
+      160
+    ],
+    "rows": [
+      "down",
+      "left",
+      "right",
+      "up"
+    ],
+    "columns": [
+      "idle",
+      "step_a",
+      "neutral",
+      "step_b"
+    ],
+    "feet_pixel": [
+      16,
+      38
+    ],
+    "sprite_offset": [
+      0,
+      -10
+    ],
+    "walk_fps": 6,
+    "names": [
+      "apprentice",
+      "danu"
+    ]
+  },
+  "tiles": {
+    "stone_a": [
+      0,
+      0
+    ],
+    "stone_b": [
+      1,
+      0
+    ],
+    "stone_c": [
+      2,
+      0
+    ],
+    "stone_moss": [
+      3,
+      0
+    ],
+    "wood_a": [
+      0,
+      1
+    ],
+    "wood_b": [
+      1,
+      1
+    ],
+    "earth": [
+      2,
+      1
+    ],
+    "grass": [
+      3,
+      1
+    ],
+    "wall": [
+      0,
+      2
+    ],
+    "wall_base": [
+      1,
+      2
+    ],
+    "water": [
+      2,
+      2
+    ],
+    "water_edge": [
+      3,
+      2
+    ],
+    "path_edge": [
+      0,
+      3
+    ],
+    "brass_inlay": [
+      1,
+      3
+    ],
+    "steps": [
+      2,
+      3
+    ],
+    "dark_floor": [
+      3,
+      3
+    ]
+  },
+  "props": {
+    "brass-lamp": {
+      "size": [
+        32,
+        48
+      ],
+      "ground_pixel": [
+        16,
+        46
+      ]
+    },
+    "oak-bookshelf": {
+      "size": [
+        64,
+        64
+      ],
+      "ground_pixel": [
+        32,
+        58
+      ]
+    },
+    "stone-arch": {
+      "size": [
+        96,
+        96
+      ],
+      "ground_pixel": [
+        48,
+        95
+      ]
+    },
+    "parts-crate": {
+      "size": [
+        32,
+        32
+      ],
+      "ground_pixel": [
+        16,
+        27
+      ]
+    }
+  },
+  "collision": "Existing gameplay geometry remains authoritative; resources add no collision polygons.",
+  "portrait": "Unmodified image-generation master, displayed inside a 256px UI region; not used as a sprite sheet."
+}
